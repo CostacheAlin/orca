@@ -1,5 +1,7 @@
 import { GitHandlerOperationContext, GIT_BULK_CHUNK_SIZE } from './git-handler-operation-context'
 import { commitChangesRelay } from './git-handler-worktree-ops'
+import { runWithGitWorktreeOperationLock } from '../shared/git-worktree-operation-lock'
+import { runWithGitIndexLockRetry } from '../shared/git-index-lock-retry'
 
 const BULK_CHUNK_SIZE = GIT_BULK_CHUNK_SIZE
 
@@ -9,7 +11,11 @@ export class GitHandlerWorktreeChangeOperations extends GitHandlerOperationConte
     const worktreePath = params.worktreePath as string
     const filePath = params.filePath as string
     try {
-      await this.git(['add', '--', this.literalPathspec(filePath)], worktreePath)
+      await runWithGitWorktreeOperationLock(worktreePath, undefined, () =>
+        runWithGitIndexLockRetry(() =>
+          this.git(['add', '--', this.literalPathspec(filePath)], worktreePath)
+        )
+      )
     } finally {
       this.clearGitMutationReadCaches()
     }
@@ -20,7 +26,9 @@ export class GitHandlerWorktreeChangeOperations extends GitHandlerOperationConte
     const worktreePath = params.worktreePath as string
     const message = params.message as string
     try {
-      return await commitChangesRelay(this.git.bind(this), worktreePath, message)
+      return await runWithGitWorktreeOperationLock(worktreePath, undefined, () =>
+        commitChangesRelay(this.git.bind(this), worktreePath, message)
+      )
     } finally {
       this.clearGitMutationReadCaches()
     }
@@ -31,7 +39,11 @@ export class GitHandlerWorktreeChangeOperations extends GitHandlerOperationConte
     const worktreePath = params.worktreePath as string
     const filePath = params.filePath as string
     try {
-      await this.git(['restore', '--staged', '--', this.literalPathspec(filePath)], worktreePath)
+      await runWithGitWorktreeOperationLock(worktreePath, undefined, () =>
+        runWithGitIndexLockRetry(() =>
+          this.git(['restore', '--staged', '--', this.literalPathspec(filePath)], worktreePath)
+        )
+      )
     } finally {
       this.clearGitMutationReadCaches()
     }
@@ -42,13 +54,17 @@ export class GitHandlerWorktreeChangeOperations extends GitHandlerOperationConte
     const worktreePath = params.worktreePath as string
     const filePaths = params.filePaths as string[]
     try {
-      for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
-        const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
-        await this.git(
-          ['add', '--', ...chunk.map((filePath) => this.literalPathspec(filePath))],
-          worktreePath
-        )
-      }
+      await runWithGitWorktreeOperationLock(worktreePath, undefined, async () => {
+        for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
+          const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
+          await runWithGitIndexLockRetry(() =>
+            this.git(
+              ['add', '--', ...chunk.map((filePath) => this.literalPathspec(filePath))],
+              worktreePath
+            )
+          )
+        }
+      })
     } finally {
       this.clearGitMutationReadCaches()
     }
@@ -59,13 +75,22 @@ export class GitHandlerWorktreeChangeOperations extends GitHandlerOperationConte
     const worktreePath = params.worktreePath as string
     const filePaths = params.filePaths as string[]
     try {
-      for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
-        const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
-        await this.git(
-          ['restore', '--staged', '--', ...chunk.map((filePath) => this.literalPathspec(filePath))],
-          worktreePath
-        )
-      }
+      await runWithGitWorktreeOperationLock(worktreePath, undefined, async () => {
+        for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
+          const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
+          await runWithGitIndexLockRetry(() =>
+            this.git(
+              [
+                'restore',
+                '--staged',
+                '--',
+                ...chunk.map((filePath) => this.literalPathspec(filePath))
+              ],
+              worktreePath
+            )
+          )
+        }
+      })
     } finally {
       this.clearGitMutationReadCaches()
     }

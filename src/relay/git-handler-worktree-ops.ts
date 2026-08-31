@@ -1,4 +1,5 @@
 import * as path from 'node:path'
+import { runWithGitIndexLockRetry } from '../shared/git-index-lock-retry'
 import { resolveWorktreeAddBaseRef } from '../shared/worktree/base-ref'
 import { windowsLongPathGitArgs } from '../shared/windows-long-path-git-args'
 import type { GitExec } from './git-handler-ops'
@@ -173,7 +174,7 @@ export async function commitChangesRelay(
   }
 
   try {
-    await git(['commit', '-m', message], worktreePath)
+    await runWithGitIndexLockRetry(() => git(['commit', '-m', message], worktreePath))
     return { success: true }
   } catch (error) {
     // Why: surface whichever channel carries the useful message. Pre-commit/GPG
