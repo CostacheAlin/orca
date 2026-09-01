@@ -757,7 +757,12 @@ async function probeRequiredNativeDeps(
           hostPlatform,
           nodePath,
           remoteDir,
-          `try { & ${powerShellLiteral(nodePath)} -e ${powerShellNativeArg(probeJs)} } catch { 'MISSING' }`
+          // Why the $LASTEXITCODE guard (matching the sibling probe below): the three-state verdict
+          // rests on this shell always exiting 0 and printing MISSING for a real load failure, so
+          // that a rejection can only ever mean the host never answered. PowerShell does not raise
+          // a terminating error for a native command that exits non-zero, so without this a broken
+          // node-pty on Windows could surface as a rejection and skip the repair it needs.
+          `try { & ${powerShellLiteral(nodePath)} -e ${powerShellNativeArg(probeJs)}; if ($LASTEXITCODE -ne 0) { 'MISSING' } } catch { 'MISSING' }`
         )
       : commandWithNodePath(
           hostPlatform,
