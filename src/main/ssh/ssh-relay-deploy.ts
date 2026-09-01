@@ -77,6 +77,12 @@ import {
 import { detectRemoteHostPlatform } from './ssh-remote-platform-detection'
 import { powerShellCommand, powerShellLiteral, powerShellNativeArg } from './ssh-remote-powershell'
 import { relaySocketNameForInstanceId } from './ssh-relay-instance-id'
+import {
+  parseShortRelaySocketDir,
+  remoteSocketPathFitsLimit,
+  resolveShortRelaySocketDirCommand,
+  shortRelaySocketPath
+} from './relay-socket-path-limit'
 import { isSshSessionLimitError } from './ssh-session-limit-error'
 import {
   isWindowsRelayPipePath,
@@ -1382,9 +1388,13 @@ async function launchRelay(
   const escapedNode = shellEscape(nodePath)
   // Why: remoteRelayDir is shared across Orca targets for one account; hashing the target ID into the socket name stops cross-target attach.
   const sockName = relaySocketNameForInstanceId(relayInstanceId)
-  const sockFile = relayEndpointForHost(hostPlatform, remoteDir, sockName)
-  const endpointDir = relayHookEndpointDirForHost(hostPlatform, remoteDir, sockFile)
+  const defaultSockFile = relayEndpointForHost(hostPlatform, remoteDir, sockName)
+  const endpointDir = relayHookEndpointDirForHost(hostPlatform, remoteDir, defaultSockFile)
   const credentialFile = joinRemotePath(hostPlatform, remoteDir, `${sockName}.credential`)
+  // Why: a long remote $HOME pushes the default endpoint past sun_path and bind fails with a bare `listen EINVAL` (#10726).
+  const sockFile = remoteSocketPathFitsLimit(hostPlatform, defaultSockFile)
+    ? defaultSockFile
+    : await resolveShortPosixRelaySocketPath(conn, sockName, defaultSockFile, signal)
 
   if (isWindowsRemoteHost(hostPlatform)) {
     const activePipeMarkerPath = windowsActivePipeMarkerPath(hostPlatform, remoteDir, sockName)
@@ -1468,7 +1478,10 @@ async function launchRelay(
     signal
   })
   // Why: --log-file lets the relay rotate relay.log in-process; the shell redirect stays to capture pre-JS boot/crash output.
-  const launchCmd = `cd ${escapedDir} && chmod 600 ${shellEscape(credentialFile)} && nohup ${escapedNode} relay.js --detached --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)} --credential-file ${shellEscape(credentialFile)} --log-file ${shellEscape(logFile)} > ${shellEscape(logFile)} 2>&1 </dev/null &`
+  // Why: the relay derives its hook endpoint dir from the socket path; pin it back under the relay dir when the socket moved to /tmp.
+  const endpointDirArg =
+    sockFile === defaultSockFile ? '' : ` --endpoint-dir ${shellEscape(endpointDir)}`
+  const launchCmd = `cd ${escapedDir} && chmod 600 ${shellEscape(credentialFile)} && nohup ${escapedNode} relay.js --detached --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)}${endpointDirArg} --credential-file ${shellEscape(credentialFile)} --log-file ${shellEscape(logFile)} > ${shellEscape(logFile)} 2>&1 </dev/null &`
   const launchChannel = await conn.exec(launchCmd, { signal })
   launchChannel.on('data', () => {})
   launchChannel.on('error', () => {})
@@ -1527,6 +1540,40 @@ async function launchRelay(
     sockPath: sockFile,
     credentialFile
   }
+}
+
+/**
+ * Move the endpoint under a `$HOME`-independent base so its length is bounded.
+ *
+ * The hashed socket name is preserved in full: only the directory shrinks, so the
+ * short form stays deterministic per target and cannot collide with another target.
+ */
+async function resolveShortPosixRelaySocketPath(
+  conn: SshConnection,
+  sockName: string,
+  defaultSockFile: string,
+  signal?: AbortSignal
+): Promise<string> {
+  const output = await execCommand(conn, resolveShortRelaySocketDirCommand(), { signal }).catch(
+    (err: unknown) => {
+      if (isUnconfirmedSshCommandTermination(err)) {
+        throw err
+      }
+      signal?.throwIfAborted()
+      return ''
+    }
+  )
+  const shortDir = parseShortRelaySocketDir(output)
+  if (!shortDir) {
+    throw new Error(
+      `Relay socket path ${defaultSockFile} exceeds the remote Unix socket limit and no short socket directory could be created on the host.`
+    )
+  }
+  const shortSockFile = shortRelaySocketPath(shortDir, sockName)
+  console.warn(
+    `[ssh-relay] Socket path too long for sun_path; using ${shortSockFile} instead of ${defaultSockFile}`
+  )
+  return shortSockFile
 }
 
 function waitForRelayPoll(delayMs: number, signal?: AbortSignal): Promise<void> {
