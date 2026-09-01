@@ -21,6 +21,16 @@ describe('git index lock retry', () => {
     expect(isGitIndexLockError(new Error('fatal: not a git repository'))).toBe(false)
   })
 
+  it('rethrows a non-lock failure without retrying', async () => {
+    vi.useFakeTimers()
+    const failure = new Error('fatal: pathspec did not match any files')
+    const run = vi.fn<() => Promise<string>>().mockRejectedValue(failure)
+
+    await expect(runWithGitIndexLockRetry(run)).rejects.toBe(failure)
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('retries a lock failure and preserves other failures', async () => {
     vi.useFakeTimers()
     const run = vi

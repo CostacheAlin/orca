@@ -163,7 +163,8 @@ export async function worktreeIsCleanOp(
 export async function commitChangesRelay(
   git: GitExec,
   worktreePath: string,
-  message: string
+  message: string,
+  signal?: AbortSignal
 ): Promise<{ success: boolean; error?: string }> {
   // Why: defense-in-depth. The IPC handler at src/main/ipc/filesystem.ts validates
   // the message, but a relay caller (future automation, or an SSH client connecting
@@ -174,7 +175,10 @@ export async function commitChangesRelay(
   }
 
   try {
-    await runWithGitIndexLockRetry(() => git(['commit', '-m', message], worktreePath))
+    await runWithGitIndexLockRetry(
+      () => git(['commit', '-m', message], worktreePath, { signal }),
+      signal
+    )
     return { success: true }
   } catch (error) {
     // Why: surface whichever channel carries the useful message. Pre-commit/GPG

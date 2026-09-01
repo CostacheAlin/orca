@@ -1,4 +1,5 @@
 import { GitHandlerOperationContext, GIT_BULK_CHUNK_SIZE } from './git-handler-operation-context'
+import type { RequestContext } from './dispatcher'
 import { commitChangesRelay } from './git-handler-worktree-ops'
 import { runWithGitWorktreeOperationLock } from '../shared/git-worktree-operation-lock'
 import { runWithGitIndexLockRetry } from '../shared/git-index-lock-retry'
@@ -6,14 +7,16 @@ import { runWithGitIndexLockRetry } from '../shared/git-index-lock-retry'
 const BULK_CHUNK_SIZE = GIT_BULK_CHUNK_SIZE
 
 export class GitHandlerWorktreeChangeOperations extends GitHandlerOperationContext {
-  async stage(params: Record<string, unknown>) {
+  async stage(params: Record<string, unknown>, context?: RequestContext) {
     this.clearGitMutationReadCaches()
     const worktreePath = params.worktreePath as string
     const filePath = params.filePath as string
+    const signal = context?.signal
     try {
-      await runWithGitWorktreeOperationLock(worktreePath, undefined, () =>
-        runWithGitIndexLockRetry(() =>
-          this.git(['add', '--', this.literalPathspec(filePath)], worktreePath)
+      await runWithGitWorktreeOperationLock(worktreePath, signal, () =>
+        runWithGitIndexLockRetry(
+          () => this.git(['add', '--', this.literalPathspec(filePath)], worktreePath, { signal }),
+          signal
         )
       )
     } finally {
@@ -21,27 +24,36 @@ export class GitHandlerWorktreeChangeOperations extends GitHandlerOperationConte
     }
   }
 
-  async commit(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
+  async commit(
+    params: Record<string, unknown>,
+    context?: RequestContext
+  ): Promise<{ success: boolean; error?: string }> {
     this.clearGitMutationReadCaches()
     const worktreePath = params.worktreePath as string
     const message = params.message as string
+    const signal = context?.signal
     try {
-      return await runWithGitWorktreeOperationLock(worktreePath, undefined, () =>
-        commitChangesRelay(this.git.bind(this), worktreePath, message)
+      return await runWithGitWorktreeOperationLock(worktreePath, signal, () =>
+        commitChangesRelay(this.git.bind(this), worktreePath, message, signal)
       )
     } finally {
       this.clearGitMutationReadCaches()
     }
   }
 
-  async unstage(params: Record<string, unknown>) {
+  async unstage(params: Record<string, unknown>, context?: RequestContext) {
     this.clearGitMutationReadCaches()
     const worktreePath = params.worktreePath as string
     const filePath = params.filePath as string
+    const signal = context?.signal
     try {
-      await runWithGitWorktreeOperationLock(worktreePath, undefined, () =>
-        runWithGitIndexLockRetry(() =>
-          this.git(['restore', '--staged', '--', this.literalPathspec(filePath)], worktreePath)
+      await runWithGitWorktreeOperationLock(worktreePath, signal, () =>
+        runWithGitIndexLockRetry(
+          () =>
+            this.git(['restore', '--staged', '--', this.literalPathspec(filePath)], worktreePath, {
+              signal
+            }),
+          signal
         )
       )
     } finally {
@@ -49,19 +61,23 @@ export class GitHandlerWorktreeChangeOperations extends GitHandlerOperationConte
     }
   }
 
-  async bulkStage(params: Record<string, unknown>) {
+  async bulkStage(params: Record<string, unknown>, context?: RequestContext) {
     this.clearGitMutationReadCaches()
     const worktreePath = params.worktreePath as string
     const filePaths = params.filePaths as string[]
+    const signal = context?.signal
     try {
-      await runWithGitWorktreeOperationLock(worktreePath, undefined, async () => {
+      await runWithGitWorktreeOperationLock(worktreePath, signal, async () => {
         for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
           const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
-          await runWithGitIndexLockRetry(() =>
-            this.git(
-              ['add', '--', ...chunk.map((filePath) => this.literalPathspec(filePath))],
-              worktreePath
-            )
+          await runWithGitIndexLockRetry(
+            () =>
+              this.git(
+                ['add', '--', ...chunk.map((filePath) => this.literalPathspec(filePath))],
+                worktreePath,
+                { signal }
+              ),
+            signal
           )
         }
       })
@@ -70,24 +86,28 @@ export class GitHandlerWorktreeChangeOperations extends GitHandlerOperationConte
     }
   }
 
-  async bulkUnstage(params: Record<string, unknown>) {
+  async bulkUnstage(params: Record<string, unknown>, context?: RequestContext) {
     this.clearGitMutationReadCaches()
     const worktreePath = params.worktreePath as string
     const filePaths = params.filePaths as string[]
+    const signal = context?.signal
     try {
-      await runWithGitWorktreeOperationLock(worktreePath, undefined, async () => {
+      await runWithGitWorktreeOperationLock(worktreePath, signal, async () => {
         for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
           const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
-          await runWithGitIndexLockRetry(() =>
-            this.git(
-              [
-                'restore',
-                '--staged',
-                '--',
-                ...chunk.map((filePath) => this.literalPathspec(filePath))
-              ],
-              worktreePath
-            )
+          await runWithGitIndexLockRetry(
+            () =>
+              this.git(
+                [
+                  'restore',
+                  '--staged',
+                  '--',
+                  ...chunk.map((filePath) => this.literalPathspec(filePath))
+                ],
+                worktreePath,
+                { signal }
+              ),
+            signal
           )
         }
       })
