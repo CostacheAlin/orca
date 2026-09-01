@@ -413,7 +413,9 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
 
     const warnMessages = warnSpy.mock.calls.map((args) => String(args[0] ?? ''))
     expect(warnMessages.some((m) => m.includes('Repairing missing native deps'))).toBe(false)
-    expect(warnMessages.some((m) => m.includes('Native-deps probe did not answer'))).toBe(true)
+    // Why no log assertion: the behavioural claim above is the real one. Asserting on warn text
+    // pinned wording that main's landed probe verdict does not use, and #18000 adds its own.
+    expect(execCalls.some((c) => c.includes("rm -rf 'node_modules/node-pty'"))).toBe(false)
   })
 
   it('lets a probe SSH-channel failure bubble up rather than silently mapping to MISSING', async () => {
