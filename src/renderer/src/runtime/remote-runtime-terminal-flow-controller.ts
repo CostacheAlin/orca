@@ -84,20 +84,36 @@ export abstract class RemoteRuntimeTerminalFlowController extends RemoteRuntimeT
     if (stream.pendingAckBytes >= TERMINAL_MULTIPLEX_ACK_BATCH_BYTES) {
       return this.flushOutputAcknowledgement(stream)
     }
-    if (stream.ackFlushTimer === null) {
-      stream.ackFlushTimer = setTimeout(() => {
-        stream.ackFlushTimer = null
-        this.flushOutputAcknowledgement(stream)
-      }, TERMINAL_MULTIPLEX_ACK_FLUSH_MS)
-    }
+    this.scheduleOutputAcknowledgementFlush(stream)
     return true
+  }
+
+  private scheduleOutputAcknowledgementFlush(stream: RemoteRuntimeMultiplexedTerminalState): void {
+    if (stream.ackFlushTimer !== null) {
+      return
+    }
+    stream.ackFlushTimer = setTimeout(() => {
+      stream.ackFlushTimer = null
+      this.flushOutputAcknowledgement(stream)
+    }, TERMINAL_MULTIPLEX_ACK_FLUSH_MS)
   }
 
   private flushOutputAcknowledgement(stream: RemoteRuntimeMultiplexedTerminalState): boolean {
     clearAckFlushTimer(stream)
     const bytes = stream.pendingAckBytes
+    if (bytes <= 0) {
+      return true
+    }
     stream.pendingAckBytes = 0
-    return bytes <= 0 || this.acknowledgeOutput(stream, bytes)
+    if (this.acknowledgeOutput(stream, bytes)) {
+      // Why: only a frame the transport took reopens the host's send window.
+      stream.watchdog.recordOutputAcknowledged(bytes)
+      return true
+    }
+    // Why re-charged: dropping an unsent ack shrinks the host window for the stream's life, and the only retry trigger is the output that shrunken window blocks.
+    stream.pendingAckBytes += bytes
+    this.scheduleOutputAcknowledgementFlush(stream)
+    return false
   }
 
   getStreamsForE2e(): Iterable<RemoteRuntimeMultiplexedTerminalState> {
