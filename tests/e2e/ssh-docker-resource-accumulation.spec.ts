@@ -137,7 +137,7 @@ test.describe('Docker SSH relay resource accumulation', () => {
         samples.push(sampleRemoteResources(target))
       }
 
-      const withTerminals = samples[samples.length - 1]
+      const withTerminals = samples.at(-1)!
       const openedTerminals = TERMINAL_COUNT - 1
       const ptsGrowth = withTerminals.ptsCount - baseline.ptsCount
       const fdGrowth = withTerminals.relayFdCount - baseline.relayFdCount
@@ -177,7 +177,7 @@ test.describe('Docker SSH relay resource accumulation', () => {
       console.log(`[resource-accumulation] reconnects ${JSON.stringify(reconnectSamples)}`)
 
       const first = reconnectSamples[0]
-      const last = reconnectSamples[reconnectSamples.length - 1]
+      const last = reconnectSamples.at(-1)!
       expect(last.relayProcessCount).toBe(1)
       // Why: the interesting failure is monotonic growth across cycles, not the
       // absolute count, so compare the last cycle against the first.
