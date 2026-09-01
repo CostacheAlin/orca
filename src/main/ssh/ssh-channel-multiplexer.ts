@@ -91,6 +91,23 @@ export function isUndispatchedSshRequestError(error: unknown): boolean {
   )
 }
 
+/**
+ * True when a request may have run on the host despite failing here.
+ *
+ * A response deadline and a mid-flight link loss are the same verdict: the frame reached the wire
+ * and the peer's answer did not come back, so the work is `unverifiable`, never absent. Only a
+ * request the multiplexer refused before framing anything is provably un-run — hence the
+ * undispatched carve-out. Callers that phrase this to a user must not say "could not be reached"
+ * for the unverifiable case (docs/reference/ssh-execution-boundary.md).
+ */
+export function isSshRequestOutcomeUnverifiable(error: unknown): boolean {
+  if (isUndispatchedSshRequestError(error)) {
+    return false
+  }
+  const code = error instanceof Error ? (error as Error & { code?: unknown }).code : undefined
+  return code === SSH_MUX_REQUEST_TIMEOUT_CODE || code === 'CONNECTION_LOST'
+}
+
 function markUndispatched<T extends Error>(error: T): T {
   return Object.assign(error, { sshRequestUndispatched: true as const })
 }
