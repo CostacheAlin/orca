@@ -1,4 +1,4 @@
-import { FrameDecoder, KEEPALIVE_SEND_MS, encodeKeepAliveFrame } from './protocol'
+import { FrameDecoder, KEEPALIVE_SEND_MS, TIMEOUT_MS, encodeKeepAliveFrame } from './protocol'
 import type { PtyConsumerCloseCause } from '../shared/pty-consumer-session-contract'
 import type {
   DispatcherClientWriter,
@@ -122,6 +122,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
       bulkChain: Promise.resolve(),
       nextOutgoingSeq: 1,
       highestReceivedSeq: 0,
+      lastReceivedAt: Date.now(),
       generation: 0,
       closed: false,
       droppedNotificationLog: null,
@@ -144,6 +145,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
   protected resetClient(client: RelayClient): void {
     client.nextOutgoingSeq = 1
     client.highestReceivedSeq = 0
+    client.lastReceivedAt = Date.now()
     client.decoder.reset()
     client.generation++
     client.closed = false
@@ -163,13 +165,22 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
   }
 
   protected startKeepalive(): void {
+    let lastTickAt = Date.now()
     this.keepaliveTimer = setInterval(() => {
       if (this.disposed) {
         return
       }
+      const now = Date.now()
+      // Why: after host sleep every client looks stale on the first tick back, which is the process
+      // having been paused, not the peers having died. Rebase, then judge on the next full window.
+      const resumedAfterPause = now - lastTickAt > TIMEOUT_MS
+      lastTickAt = now
       for (const client of this.clients.values()) {
         if (client.closed) {
           continue
+        }
+        if (resumedAfterPause) {
+          client.lastReceivedAt = now
         }
         client.writer.enqueue(
           'liveness',
@@ -180,9 +191,31 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
           13
         )
       }
+      this.reapSilentClients(now)
     }, KEEPALIVE_SEND_MS)
     // Why: unref so the keepalive interval doesn't pin the event loop and block process exit.
     this.keepaliveTimer.unref()
+  }
+
+  /**
+   * Drop the transport of a client that has gone silent. The relay's writer parks forever on a
+   * half-open link and nothing else ever notices, so an abandoned viewer kept its owner lease and
+   * left every PTY it held paused — the shape behind the "SSH degrades until I cannot connect at
+   * all" reports. Reaping is a statement about the TRANSPORT only: the cause stays the cautious
+   * 'local' default because silence is not evidence the peer died, and the PTYs stay live for the
+   * replacement client to reclaim (docs/reference/ssh-execution-boundary.md).
+   */
+  private reapSilentClients(now: number): void {
+    for (const client of Array.from(this.clients.values())) {
+      if (client.closed || now - client.lastReceivedAt <= TIMEOUT_MS) {
+        continue
+      }
+      this.closeClient(
+        client,
+        new Error('Relay client stopped answering'),
+        client !== this.primaryClient
+      )
+    }
   }
 
   protected closeClient(

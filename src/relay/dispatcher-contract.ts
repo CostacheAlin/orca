@@ -51,6 +51,9 @@ export type RelayClient = {
   bulkChain: Promise<void>
   nextOutgoingSeq: number
   highestReceivedSeq: number
+  // Why: the relay had no inbound-liveness signal at all, so a half-open client was never reaped
+  // and kept its owner lease and paused PTYs indefinitely.
+  lastReceivedAt: number
   generation: number
   closed: boolean
   droppedNotificationLog: DroppedProducerNotificationLog | null
