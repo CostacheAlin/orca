@@ -51,18 +51,29 @@ const SHORT_DIR_MARKER = 'ORCA-RELAY-SHORT-SOCKET-DIR'
 /**
  * Create (or adopt) the per-uid short socket directory and print it.
  *
- * `ls -ldn` reports the directory entry itself, so an attacker-planted symlink or a
- * directory owned by another user fails the owner check instead of being reused.
+ * Validate before mutating, never the other way round: an unconditional `chmod` follows a
+ * symlink, so a path planted by another user would have its *target's* mode rewritten before
+ * the owner check could reject it. A fresh `mkdir` under `umask 077` already yields 0700 and
+ * proves we own it, so the only path that adopts an existing entry is the one that first
+ * proves — via `ls -ldn`, which reports the entry itself rather than what it points at — that
+ * it is a real directory, owned by this uid, already 0700. Nothing else is touched.
  */
 export function resolveShortRelaySocketDirCommand(): string {
   return [
     'uid=$(id -u) || exit 1',
     `dir="${SHORT_RELAY_SOCKET_DIR_PREFIX}$uid"`,
     'umask 077',
-    'mkdir -p "$dir" 2>/dev/null',
-    'chmod 700 "$dir" 2>/dev/null',
-    'owner=$(ls -ldn "$dir" 2>/dev/null | awk \'NR==1{print $3}\')',
-    '[ -d "$dir" ] && [ "$owner" = "$uid" ] || exit 1',
+    'if mkdir "$dir" 2>/dev/null; then',
+    '  :',
+    'else',
+    // Why the sub(): ls decorates the mode with a trailing marker for extended attributes (@),
+    // ACLs (+) or an SELinux context (.), so an exact match would refuse a directory we own.
+    '  entry=$(ls -ldn "$dir" 2>/dev/null | awk \'NR==1{sub(/[.@+]$/, "", $1); print $1" "$3}\')',
+    '  case "$entry" in',
+    '    "drwx------ $uid") ;;',
+    '    *) exit 1 ;;',
+    '  esac',
+    'fi',
     `printf '%s %s\\n' '${SHORT_DIR_MARKER}' "$dir"`
   ].join('\n')
 }
