@@ -19,15 +19,10 @@ type SshCommandTerminationError = Error & {
   sshChannelCloseConfirmed: boolean
 }
 
-// Why: callers must tell "the host answered no" from "the host never answered". Matching the
-// message text is what let an unanswered probe be read as a definitive negative.
-export const SSH_EXEC_TIMEOUT_CODE = 'SSH_EXEC_TIMEOUT'
-
-export function isSshExecTimeout(error: unknown): boolean {
-  return (
-    error instanceof Error && (error as Partial<{ code: string }>).code === SSH_EXEC_TIMEOUT_CODE
-  )
-}
+// Why the timeout still carries a code with no reader: the probe shell always exits 0 and prints
+// MISSING for a real load failure, so ANY throw already means the host never answered — the
+// verdict needs no discriminator. The code stays for diagnostics; nothing should branch on it.
+const SSH_EXEC_TIMEOUT_CODE = 'SSH_EXEC_TIMEOUT'
 
 export function isUnconfirmedSshCommandTermination(
   error: unknown

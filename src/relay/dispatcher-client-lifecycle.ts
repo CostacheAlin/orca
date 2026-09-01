@@ -122,8 +122,9 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
       bulkChain: Promise.resolve(),
       nextOutgoingSeq: 1,
       highestReceivedSeq: 0,
-      lastReceivedAt: null,
-      keepaliveObserved: false,
+      lastReceivedAt: null as number | null,
+      keepaliveObserved: false as boolean,
+      readsPaused: false as boolean,
       generation: 0,
       closed: false,
       droppedNotificationLog: null,
@@ -137,7 +138,20 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
     client.decoder = new FrameDecoder(
       (frame) => this.handleFrame(client, frame),
       (error) => this.closeClient(client, error, client !== this.primaryClient),
-      { pause: sourceOptions?.pauseReads, resume: sourceOptions?.resumeReads }
+      {
+        // Why the flag is set here rather than inside the reaper: the decoder owns the pause, and
+        // the reaper must not count silence it caused itself.
+        pause: () => {
+          client.readsPaused = true
+          sourceOptions?.pauseReads?.()
+        },
+        resume: () => {
+          // Rebase on resume: frames withheld during the pause arrive now, not late.
+          client.readsPaused = false
+          client.lastReceivedAt = Date.now()
+          sourceOptions?.resumeReads?.()
+        }
+      }
     )
     client.writer = this.createWriter(client, write, sinkOptions)
     return client
@@ -148,6 +162,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
     client.highestReceivedSeq = 0
     client.lastReceivedAt = null
     client.keepaliveObserved = false
+    client.readsPaused = false
     client.decoder.reset()
     client.generation++
     client.closed = false
@@ -230,6 +245,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
       // `terminal wait`, `--wait` and `orchestration ask` after 20s.
       if (
         client.closed ||
+        client.readsPaused ||
         !client.keepaliveObserved ||
         client.lastReceivedAt === null ||
         now - client.lastReceivedAt <= TIMEOUT_MS

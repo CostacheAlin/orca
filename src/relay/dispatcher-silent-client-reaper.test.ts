@@ -128,4 +128,33 @@ describe('RelayDispatcher silent-client reaper', () => {
     // nothing in production calls setWrite() to bring it back.
     expect(detachListener).not.toHaveBeenCalled()
   })
+
+  it('never reaps a client whose reads the relay itself paused', () => {
+    // D5: the decoder pauses reads for backpressure, and while paused no frame decodes, so
+    // lastReceivedAt freezes. Counting that as silence would reap a client the relay stopped
+    // listening to — self-inflicted. The client-side multiplexer guards the mirror case with
+    // decoderReadPaused; this is the relay half.
+    const detachListener = vi.fn()
+    let pauseReads = (): void => {}
+    let resumeReads = (): void => {}
+    dispatcher = new RelayDispatcher(() => true)
+    dispatcher.onClientDetached(detachListener)
+    const clientId = dispatcher.attachClient(() => true, undefined, undefined, {
+      pauseReads: () => pauseReads(),
+      resumeReads: () => resumeReads()
+    } as never)
+    dispatcher.feedClient(clientId, encodeKeepAliveFrame(1, 0))
+
+    // Drive the decoder's pause directly: the client is alive, we simply stopped reading it.
+    const client = (
+      dispatcher as unknown as { clients: Map<number, { readsPaused: boolean }> }
+    ).clients.get(clientId)!
+    client.readsPaused = true
+
+    vi.advanceTimersByTime(TIMEOUT_MS * 5)
+
+    expect(detachListener).not.toHaveBeenCalledWith(clientId, expect.anything())
+    void pauseReads
+    void resumeReads
+  })
 })

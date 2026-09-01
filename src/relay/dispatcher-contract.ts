@@ -60,6 +60,10 @@ export type RelayClient = {
   // judging it on inbound silence would kill `terminal wait`, `--wait` and `orchestration ask`
   // after 20s. Only a client that has proven it participates is eligible.
   keepaliveObserved: boolean
+  // Why: while the decoder holds reads paused for backpressure, no frame can decode, so
+  // lastReceivedAt freezes. Judging silence then would reap a client the relay itself stopped
+  // listening to. The client-side multiplexer guards the mirror case with decoderReadPaused.
+  readsPaused: boolean
   generation: number
   closed: boolean
   droppedNotificationLog: DroppedProducerNotificationLog | null
