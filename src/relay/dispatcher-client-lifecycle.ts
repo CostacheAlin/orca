@@ -122,7 +122,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
       bulkChain: Promise.resolve(),
       nextOutgoingSeq: 1,
       highestReceivedSeq: 0,
-      lastReceivedAt: Date.now(),
+      lastReceivedAt: null,
       generation: 0,
       closed: false,
       droppedNotificationLog: null,
@@ -145,7 +145,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
   protected resetClient(client: RelayClient): void {
     client.nextOutgoingSeq = 1
     client.highestReceivedSeq = 0
-    client.lastReceivedAt = Date.now()
+    client.lastReceivedAt = null
     client.decoder.reset()
     client.generation++
     client.closed = false
@@ -179,7 +179,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
         if (client.closed) {
           continue
         }
-        if (resumedAfterPause) {
+        if (resumedAfterPause && client.lastReceivedAt !== null) {
           client.lastReceivedAt = now
         }
         client.writer.enqueue(
@@ -207,7 +207,15 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
    */
   private reapSilentClients(now: number): void {
     for (const client of Array.from(this.clients.values())) {
-      if (client.closed || now - client.lastReceivedAt <= TIMEOUT_MS) {
+      // Why the null check is not just defensive: a relay is launched before its client finishes
+      // handshaking, and on a slow link that can exceed the window. Reaping a client that has never
+      // spoken would break the connect it is still completing, so silence only counts against a
+      // client that has already proven it can talk.
+      if (
+        client.closed ||
+        client.lastReceivedAt === null ||
+        now - client.lastReceivedAt <= TIMEOUT_MS
+      ) {
         continue
       }
       this.closeClient(

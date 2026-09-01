@@ -52,8 +52,9 @@ export type RelayClient = {
   nextOutgoingSeq: number
   highestReceivedSeq: number
   // Why: the relay had no inbound-liveness signal at all, so a half-open client was never reaped
-  // and kept its owner lease and paused PTYs indefinitely.
-  lastReceivedAt: number
+  // and kept its owner lease and paused PTYs indefinitely. Null until the first inbound frame: a
+  // client that has never spoken has not yet proven it can, so it is not yet judged on silence.
+  lastReceivedAt: number | null
   generation: number
   closed: boolean
   droppedNotificationLog: DroppedProducerNotificationLog | null

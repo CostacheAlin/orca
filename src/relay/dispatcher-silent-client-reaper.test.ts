@@ -17,11 +17,12 @@ describe('RelayDispatcher silent-client reaper', () => {
     vi.useRealTimers()
   })
 
-  it('detaches a client that has stopped answering', () => {
+  it('detaches a client that spoke once and then stopped answering', () => {
     const detachListener = vi.fn()
     dispatcher = new RelayDispatcher(() => true)
     dispatcher.onClientDetached(detachListener)
     const clientId = dispatcher.attachClient(() => true)
+    dispatcher.feedClient(clientId, encodeKeepAliveFrame(1, 0))
 
     vi.advanceTimersByTime(TIMEOUT_MS + KEEPALIVE_SEND_MS * 2)
 
@@ -58,5 +59,18 @@ describe('RelayDispatcher silent-client reaper', () => {
     vi.advanceTimersByTime(KEEPALIVE_SEND_MS)
 
     expect(detachListener).not.toHaveBeenCalled()
+  })
+
+  it('never reaps a client that has not spoken yet', () => {
+    // A relay is launched before its client finishes handshaking, and on a slow link that can
+    // outlast the window. Reaping there would break the connect the client is still completing.
+    const detachListener = vi.fn()
+    dispatcher = new RelayDispatcher(() => true)
+    dispatcher.onClientDetached(detachListener)
+    const clientId = dispatcher.attachClient(() => true)
+
+    vi.advanceTimersByTime(TIMEOUT_MS * 5)
+
+    expect(detachListener).not.toHaveBeenCalledWith(clientId, expect.anything())
   })
 })
