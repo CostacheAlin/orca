@@ -6,7 +6,7 @@ import { normalizeRuntimePathForComparison } from '../../../shared/cross-platfor
 import { getRepoSshConnectionId } from '../../../shared/execution-host'
 import { getSshGitProvider } from '../../providers/ssh-git-dispatch'
 import { detectRepoIconAndUpstream } from '../../repo-icon-autodetect'
-import { getActiveMultiplexer } from '../ssh'
+import { getActiveMultiplexer } from '../../ssh/ssh-target-registry'
 import { resolveRemoteHomePath } from './remote-home-path'
 
 export async function addRemoteRepoFromPath(
