@@ -1,5 +1,10 @@
 import type { AppState } from '@/store/types'
-import { getIndexedRepoMap, getIndexedWorktreeMap } from '@/store/worktree-repo-index'
+import {
+  findIndexedRepoOwnerForHost,
+  resolveIndexedRepoOwner,
+  resolveIndexedWorktreeOwner
+} from './worktree-runtime-owner-index'
+import { getRepoSshConnectionId, normalizeExecutionHostId } from '../../../shared/execution-host'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
 import { getRepoIdFromWorktreeId } from '../../../shared/worktree/id'
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
@@ -60,10 +65,32 @@ export function getConnectionIdFromState(
   }
   // Why: owner resolution runs from retained Zustand selectors, so unrelated
   // store writes must not flatten every worktree or scan every repository.
-  const worktree = getIndexedWorktreeMap(state.worktreesByRepo).get(worktreeId)
+  const worktreeResolution = resolveIndexedWorktreeOwner(state.worktreesByRepo, worktreeId)
+  if (worktreeResolution.kind === 'ambiguous') {
+    // Why (#17799): rows that disagree about the owner cannot name a connection.
+    // `undefined` is this module's documented "cannot determine the host" answer;
+    // collapsing it to `null` would authorize a local read of a remote path.
+    return undefined
+  }
+  const worktree = worktreeResolution.kind === 'resolved' ? worktreeResolution.owner : undefined
   const repoId = worktree?.repoId ?? getRepoIdFromWorktreeId(worktreeId)
-  const repo = getIndexedRepoMap(state.repos).get(repoId)
-  return repo ? (repo.connectionId ?? null) : undefined
+  // Why (#17799): take the connection off the same host record the rest of owner
+  // resolution used. A host-blind, last-wins repo lookup can pair a runtime owner
+  // with a client-owned SSH connection the runtime has never heard of.
+  const worktreeHostId = normalizeExecutionHostId(worktree?.hostId)
+  const hostScopedRepo = worktreeHostId
+    ? findIndexedRepoOwnerForHost(state.repos, repoId, worktreeHostId)
+    : null
+  if (hostScopedRepo) {
+    return getRepoSshConnectionId(hostScopedRepo)
+  }
+  const repoResolution = resolveIndexedRepoOwner(state.repos, repoId)
+  if (repoResolution.kind === 'ambiguous') {
+    return undefined
+  }
+  return repoResolution.kind === 'resolved'
+    ? getRepoSshConnectionId(repoResolution.owner)
+    : undefined
 }
 
 export function getConnectionIdForFileFromState(

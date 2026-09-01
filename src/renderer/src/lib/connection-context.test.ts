@@ -525,6 +525,36 @@ describe('getConnectionIdFromState', () => {
     expect(getConnectionIdFromState(state, 'repo-ssh::/home/neil/repo-feature')).toBe('ssh-2')
   })
 
+  it('refuses to resolve a connection when duplicate repo rows disagree about the owning host', () => {
+    // Why (#17799): a repo id carried by two rows — one runtime-owned, one holding a
+    // client-owned SSH connection — must not hand the client's connection to the runtime.
+    const state: ConnectionContextState = {
+      folderWorkspaces: [],
+      projectGroups: [],
+      repos: [
+        makeRepo({ id: 'repo-dup', executionHostId: 'runtime:env-a' }),
+        makeRepo({ id: 'repo-dup', connectionId: 'ssh-client' })
+      ],
+      worktreesByRepo: {}
+    }
+
+    expect(getConnectionIdFromState(state, 'repo-dup::/home/neil/repo-feature')).toBeUndefined()
+  })
+
+  it('still resolves duplicate repo rows that agree about the owning host', () => {
+    const state: ConnectionContextState = {
+      folderWorkspaces: [],
+      projectGroups: [],
+      repos: [
+        makeRepo({ id: 'repo-dup', connectionId: 'ssh-same' }),
+        makeRepo({ id: 'repo-dup', connectionId: 'ssh-same', path: '/home/neil/other' })
+      ],
+      worktreesByRepo: {}
+    }
+
+    expect(getConnectionIdFromState(state, 'repo-dup::/home/neil/repo-feature')).toBe('ssh-same')
+  })
+
   it('indexes immutable worktree and repo snapshots once across repeated selector calls', () => {
     let worktreeIdReads = 0
     let repoIdReads = 0

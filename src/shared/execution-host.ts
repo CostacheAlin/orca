@@ -166,6 +166,24 @@ export function getRepoExecutionHostId(
   return connectionId ? toSshExecutionHostId(connectionId) : LOCAL_EXECUTION_HOST_ID
 }
 
+// Why: SSH ownership has two spellings on a repo row — the legacy `connectionId`
+// field and the unified `executionHostId`. Routing that reads the raw field answers
+// "local" for a row that only carries `ssh:<target>`, which runs a remote operation
+// on the client. Resolve the host first, then read the connection off it.
+export function getRepoSshConnectionId(
+  repo: Pick<Repo, 'connectionId' | 'executionHostId'>
+): string | null {
+  const parsed = parseExecutionHostId(getRepoExecutionHostId(repo))
+  return parsed?.kind === 'ssh' ? parsed.targetId : null
+}
+
+export function getSshTargetIdForExecutionHost(
+  executionHostId: string | null | undefined
+): string | null {
+  const parsed = parseExecutionHostId(executionHostId)
+  return parsed?.kind === 'ssh' ? parsed.targetId : null
+}
+
 export function getWorktreeExecutionHostId(
   worktree: Pick<Worktree, 'hostId'>,
   repo: Pick<Repo, 'connectionId' | 'executionHostId'> | undefined,
