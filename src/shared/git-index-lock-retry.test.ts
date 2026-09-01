@@ -45,6 +45,16 @@ describe('git index lock retry', () => {
     expect(run).toHaveBeenCalledTimes(2)
   })
 
+  it('rejects without running when the signal is already aborted', async () => {
+    vi.useFakeTimers()
+    const run = vi.fn<() => Promise<string>>().mockResolvedValue('ok')
+
+    await expect(runWithGitIndexLockRetry(run, AbortSignal.abort())).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it('cancels a pending retry when the caller aborts', async () => {
     vi.useFakeTimers()
     const controller = new AbortController()

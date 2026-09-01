@@ -51,6 +51,9 @@ export async function runWithGitIndexLockRetry<T>(
   signal?: AbortSignal
 ): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
+    if (signal?.aborted) {
+      throw createAbortError()
+    }
     try {
       return await run()
     } catch (error) {
