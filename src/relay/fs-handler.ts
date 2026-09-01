@@ -205,12 +205,15 @@ export class FsHandler {
     }
   }
 
-  private listFiles(params: Record<string, unknown>, context?: RequestContext): Promise<string[]> {
+  private async listFiles(
+    params: Record<string, unknown>,
+    context?: RequestContext
+  ): Promise<string[]> {
     const rootPath = expandTilde(params.rootPath as string)
-    // Why: the cap applies whether or not the client asked for one. A relay that is only bounded
-    // when the caller remembers to send maxResults is not bounded — an older client, or a new call
-    // site that forgets, then makes the host serialize an arbitrarily large array into one response
-    // frame (#12547: 588k paths / 65MB, which fails as "Message too large" or over-capacity).
+    // Why: the scan is bounded whether or not the client asked for one. A relay that is only
+    // bounded when the caller remembers to send maxResults is not bounded — an older client, or a
+    // new call site that forgets, then makes the host serialize an arbitrarily large array into one
+    // response frame (#12547: 588k paths / 65MB, which fails as "Message too large").
     const requestedMaxResults =
       typeof params.maxResults === 'number' &&
       Number.isInteger(params.maxResults) &&
@@ -230,13 +233,25 @@ export class FsHandler {
     // Why #7721: full-tree scans are the relay's most expensive request; the
     // coordinator caps them at one per client, coalescing duplicates and
     // aborting a stale scan when the workspace changes or the host cancels.
-    return this.listFilesScans.run({
+    const files = await this.listFilesScans.run({
       clientId: context?.clientId ?? 0,
       key: JSON.stringify([rootPath, excludePathPrefixes, maxResults, searchQuery]),
       signal: context?.signal,
       start: (signal) =>
         runListFilesScan(rootPath, excludePathPrefixes, signal, maxResults, searchQuery)
     })
+    // Why: a client that named no limit reads the array as the whole listing, and clients that
+    // predate `maxResults` on this call hardcode `truncated: false` — handing them the prefix shows
+    // a partial tree as a complete one, with no wire change for them to notice (remote wire
+    // compatibility, rule 3). The verdict each caller gets is its own, so coalescing is unaffected.
+    // Failing here is the same choice the readdir walker already makes: silent truncation is worse
+    // than an explicit error.
+    if (requestedMaxResults === undefined && files.length >= maxResults) {
+      throw new Error(
+        `This workspace has more than ${maxResults - 1} files. Update Orca on this device so it can request a bounded page, or open a narrower folder — the host will not return a partial listing as if it were complete.`
+      )
+    }
+    return files
   }
 
   private async workspaceSpaceScan(params: Record<string, unknown>, context: RequestContext) {

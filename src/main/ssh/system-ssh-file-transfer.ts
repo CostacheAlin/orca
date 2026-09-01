@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process'
-import { constants } from 'node:fs'
-import { lstat, open, readdir } from 'node:fs/promises'
+import { lstat, readdir } from 'node:fs/promises'
 import { join as pathJoin } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import type { SshTarget } from '../../shared/ssh-types'
@@ -23,6 +22,7 @@ import {
   type ProcessResult
 } from './system-ssh-operation-lifecycle'
 import {
+  uploadFileViaSystemSsh,
   WINDOWS_STDIN_WRITE_CHUNK_BYTES,
   WINDOWS_STDIN_WRITE_TIMEOUT_MS,
   writeBufferViaSystemSsh
@@ -117,21 +117,23 @@ async function uploadDirectoryViaSystemSshWindows(
   await createWindowsUploadDirectories(target, plan.directories, options)
   for (const file of plan.files) {
     throwIfAborted(options.signal)
-    await uploadWindowsFileInChunks(target, file, options)
+    // Reuses the single-file upload: it already opens O_NOFOLLOW, verifies the source did not
+    // change under it, and splits the bytes into stdin-sized writes staged under a partial name.
+    await uploadFileViaSystemSsh(target, file.localPath, file.remotePath, options)
   }
 }
 
 type WindowsUploadPlan = {
   directories: string[]
-  files: { localPath: string; remotePath: string; size: number }[]
+  files: { localPath: string; remotePath: string }[]
 }
 
 /**
  * #16432: this used to base64 every artifact into one JSON array and push the whole ~1.9MB string
- * into `[Console]::In.ReadToEnd()`. Base64 inflates the payload 1.33x, ReadToEnd materializes the
- * whole bundle as a single PowerShell string, and Windows PowerShell 5.1 cannot read stdin that
- * large over a non-pty ssh exec — it blocks forever instead of failing. Nothing about a directory
- * upload requires one frame: the plan carries paths and sizes only, and the bytes go per file.
+ * into one PowerShell stdin. Base64 inflates the payload 1.33x, and Windows PowerShell 5.1 cannot
+ * read a stdin that large over a non-pty ssh exec — it blocks forever instead of failing. Nothing
+ * about a directory upload requires one frame: the plan carries paths only, and the bytes go per
+ * file, in writes bounded by WINDOWS_STDIN_WRITE_CHUNK_BYTES.
  */
 async function collectWindowsUploadPlan(
   localDir: string,
@@ -154,7 +156,7 @@ async function collectWindowsUploadPlan(
       await collectWindowsUploadPlan(localPath, remotePath, hostPlatform, signal, plan)
       continue
     }
-    plan.files.push({ localPath, remotePath, size: statResult.size })
+    plan.files.push({ localPath, remotePath })
   }
   return plan
 }
@@ -202,45 +204,14 @@ async function createWindowsUploadDirectories(
   await flush()
 }
 
-async function uploadWindowsFileInChunks(
-  target: SshTarget,
-  file: { localPath: string; remotePath: string; size: number },
-  options: SystemSshOperationOptions
-): Promise<void> {
-  const handle = await open(file.localPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
-  try {
-    const openedStat = await handle.stat()
-    if (!openedStat.isFile() || openedStat.size !== file.size) {
-      throw new Error(`File changed during upload: ${file.localPath}`)
-    }
-    const buffer = Buffer.allocUnsafe(WINDOWS_STDIN_WRITE_CHUNK_BYTES)
-    let offset = 0
-    while (offset < openedStat.size) {
-      throwIfAborted(options.signal)
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset)
-      if (bytesRead === 0) {
-        throw new Error(`File truncated during upload: ${file.localPath}`)
-      }
-      await writeBufferViaSystemSsh(target, file.remotePath, buffer.subarray(0, bytesRead), {
-        ...options,
-        append: offset > 0
-      })
-      offset += bytesRead
-    }
-    if (offset === 0) {
-      // An empty artifact still has to exist on the host.
-      await writeBufferViaSystemSsh(target, file.remotePath, Buffer.alloc(0), options)
-    }
-  } finally {
-    await handle.close()
-  }
-}
-
 function makeWindowsCreateDirectoriesCommand(): string {
   return powerShellCommand(
     [
       '$ErrorActionPreference = "Stop"',
-      '$json = [Console]::In.ReadToEnd()',
+      // The reporter measured this reader surviving 50KB where `[Console]::In` wedged at the same
+      // size (#16432); the batch above stays under that.
+      '$reader = New-Object System.IO.StreamReader([Console]::OpenStandardInput())',
+      'try { $json = $reader.ReadToEnd() } finally { $reader.Dispose() }',
       'if ([string]::IsNullOrWhiteSpace($json)) { return }',
       'foreach ($path in @($json | ConvertFrom-Json)) {',
       '  $null = [System.IO.Directory]::CreateDirectory([string]$path)',

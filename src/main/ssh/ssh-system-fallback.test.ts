@@ -105,6 +105,13 @@ type EventedProcess = EventEmitter & {
   killed: boolean
 }
 
+// Windows writes read their source asynchronously before spawning, so a close emitted straight
+// after the call can beat the listener. Emit it from the spawn instead.
+function closeOnceSpawned(proc: EventedProcess): EventedProcess {
+  setImmediate(() => proc.emit('close', 0, null))
+  return proc
+}
+
 function createEventedProcess(): EventedProcess {
   const proc = new EventEmitter() as EventedProcess
   proc.stdin = Object.assign(new EventEmitter(), {
@@ -658,7 +665,7 @@ describe('spawnSystemSsh', () => {
 
   it('writes files to Windows system SSH targets with PowerShell stdin bytes', async () => {
     const proc = createEventedProcess()
-    spawnMock.mockReturnValue(proc)
+    spawnMock.mockImplementation(() => closeOnceSpawned(proc))
     const hostPlatform = getRemoteHostPlatform('win32-x64')
 
     const promise = writeFileViaSystemSsh(
@@ -667,7 +674,6 @@ describe('spawnSystemSsh', () => {
       '0.1.0',
       { hostPlatform }
     )
-    proc.emit('close', 0, null)
 
     await expect(promise).resolves.toBeUndefined()
     const args = spawnMock.mock.calls[0][1] as string[]
@@ -679,7 +685,7 @@ describe('spawnSystemSsh', () => {
 
   it('writes binary buffers to Windows system SSH targets with CreateNew mode', async () => {
     const proc = createEventedProcess()
-    spawnMock.mockReturnValue(proc)
+    spawnMock.mockImplementation(() => closeOnceSpawned(proc))
     const hostPlatform = getRemoteHostPlatform('win32-x64')
 
     const promise = writeBufferViaSystemSsh(
@@ -688,7 +694,6 @@ describe('spawnSystemSsh', () => {
       Buffer.from('png'),
       { hostPlatform, exclusive: true }
     )
-    proc.emit('close', 0, null)
 
     await expect(promise).resolves.toBeUndefined()
     const args = spawnMock.mock.calls[0][1] as string[]
@@ -729,7 +734,7 @@ describe('spawnSystemSsh', () => {
 
   it('forces standalone SSH for Windows file writes when requested', async () => {
     const proc = createEventedProcess()
-    spawnMock.mockReturnValue(proc)
+    spawnMock.mockImplementation(() => closeOnceSpawned(proc))
     const hostPlatform = getRemoteHostPlatform('win32-x64')
 
     const promise = writeFileViaSystemSsh(
@@ -738,7 +743,6 @@ describe('spawnSystemSsh', () => {
       '0.1.0',
       { hostPlatform, disableControlMaster: true }
     )
-    proc.emit('close', 0, null)
 
     await expect(promise).resolves.toBeUndefined()
     const args = spawnMock.mock.calls[0][1] as string[]

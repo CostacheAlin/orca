@@ -2,6 +2,10 @@
  * #12547: the relay used to bound `fs.listFiles` only when the client asked it to. The failing UI
  * (Quick Open / Files sidebar) is exactly a call site that does not ask, so the host serialized the
  * whole tree into one response and the request died as "Message too large" or over-capacity.
+ *
+ * The scan is bounded either way now, but a caller that named no limit is never handed the prefix:
+ * clients that predate `maxResults` on this call hardcode `truncated: false`, so a prefix reaches
+ * them as a complete listing with nothing on the wire for them to notice.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -73,6 +77,36 @@ describe('fs.listFiles response bounding', () => {
     await listFiles({ rootPath: '/remote/root', maxResults: 'all' }, { clientId: 1 })
 
     expect(scanMaxResults()).toBe(QUICK_OPEN_LISTING_MAX_RESULTS)
+  })
+
+  it('refuses to answer an uncapped request with a prefix', async () => {
+    runListFilesScanMock.mockResolvedValue(
+      Array.from({ length: QUICK_OPEN_LISTING_MAX_RESULTS }, (_, index) => `f${index}`)
+    )
+
+    await expect(listFiles({ rootPath: '/remote/root' }, { clientId: 1 })).rejects.toThrow(
+      /more than 20000 files/
+    )
+  })
+
+  it('answers an uncapped request that fits, so a normal workspace is unaffected', async () => {
+    const files = Array.from({ length: QUICK_OPEN_LISTING_MAX_RESULTS - 1 }, (_, i) => `f${i}`)
+    runListFilesScanMock.mockResolvedValue(files)
+
+    await expect(listFiles({ rootPath: '/remote/root' }, { clientId: 1 })).resolves.toEqual(files)
+  })
+
+  it('hands a client that named a cap the prefix it asked for', async () => {
+    runListFilesScanMock.mockResolvedValue(
+      Array.from({ length: QUICK_OPEN_LISTING_MAX_RESULTS }, (_, index) => `f${index}`)
+    )
+
+    const files = await listFiles(
+      { rootPath: '/remote/root', maxResults: QUICK_OPEN_LISTING_MAX_RESULTS },
+      { clientId: 1 }
+    )
+
+    expect(files).toHaveLength(QUICK_OPEN_LISTING_MAX_RESULTS)
   })
 
   it('keeps a smaller client limit and clamps a larger one', async () => {

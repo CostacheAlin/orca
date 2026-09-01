@@ -265,8 +265,9 @@ export function useRuntimeFileListForWorktree({
           maxResults: QUICK_OPEN_LISTING_MAX_RESULTS,
           signal: requestAbortController.signal
         }).then((files) => ({
-          // #12547: the host stops at this cap whether or not it was asked to, so a full page means
-          // the list is a prefix. Reporting false here is what made the truncation silent.
+          // #12547: naming the cap is what makes a full page readable as "there is more". Reporting
+          // false unconditionally is what made the truncation silent; a host asked for no cap now
+          // refuses rather than answering with a prefix, so this is the only truncation left.
           files,
           truncated: files.length >= QUICK_OPEN_LISTING_MAX_RESULTS
         }))
