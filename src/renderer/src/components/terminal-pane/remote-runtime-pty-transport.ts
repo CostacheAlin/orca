@@ -247,7 +247,9 @@ export function createRemoteRuntimePtyTransport(
       clearPublishedHandleWait()
     }
     if (recovery.currentPhase === 'disconnected') {
-      autoRecoveryWindowSpent = true
+      // Why: only the wall-clock deadline is evidence the window was spent; a UI latch from a fatal
+      // resubscribe must not license reattaching a fenced same handle (#12683).
+      autoRecoveryWindowSpent ||= recovery.autoRecoveryDeadlineExpired
       // Why: cached pixels may remain, but no stream from the exhausted epoch may keep delivering or accepting terminal traffic.
       subscriptionGeneration += 1
       closeMultiplexedStream()
@@ -861,6 +863,37 @@ export function createRemoteRuntimePtyTransport(
       return true
     }
     return false
+  }
+
+  // Why: a recoverable connect failure is unverifiable contact loss, not a dead terminal, so retry
+  // whichever path can still reach the pane instead of latching with nothing armed (#12684).
+  function retryAfterRecoverableConnectFailure(nextEpoch: number): void {
+    if (destroyed || terminalEnded) {
+      return
+    }
+    if (connected && handle) {
+      scheduleResubscribeAfterTransportClose(getRecoveryReplacementPolicy(handle), nextEpoch)
+      return
+    }
+    replayLastTransportEntryPoint()
+  }
+
+  // Why: schedule() both auto-retries inside the window and leaves the retry parked when the deadline
+  // latches, so online/resume and the Reconnect button always find something to fire.
+  function scheduleConnectRetryAfterRecoverableFailure(): void {
+    if (destroyed) {
+      return
+    }
+    // Why: an ambiguous create already owns a reconciliation-gated retry that only Reconnect may
+    // re-enter; auto-replaying here would just re-probe a runtime that cannot reconcile.
+    if (terminalCreateNeedsReconciliation || agentSessionRequiresHostAuthorityReplay) {
+      recovery.markDisconnected()
+      return
+    }
+    const recoveryEpoch = recovery.isActive ? recovery.currentEpoch : recovery.begin()
+    if (!recovery.schedule(recoveryEpoch, retryAfterRecoverableConnectFailure)) {
+      recovery.markDisconnected()
+    }
   }
 
   async function attachHostSessionMirror(
@@ -2301,7 +2334,7 @@ export function createRemoteRuntimePtyTransport(
           } else if (
             isRecoverableRemoteRuntimeConnectionError(toRemoteRuntimeClientErrorLike(error))
           ) {
-            recovery.markDisconnected()
+            scheduleConnectRetryAfterRecoverableFailure()
           } else {
             recovery.cancel()
             emitRecoveryState()
@@ -2602,6 +2635,12 @@ export function createRemoteRuntimePtyTransport(
         recovery.begin()
         void transport.connect(lastConnectOptions)
         return true
+      }
+      // Why: online/resume fires a parked retry; the button must not be weaker than an event (#12684).
+      if (!destroyed && !terminalEnded && recovery.currentPhase === 'disconnected') {
+        if (recovery.retryNow()) {
+          return true
+        }
       }
       if (
         destroyed ||
