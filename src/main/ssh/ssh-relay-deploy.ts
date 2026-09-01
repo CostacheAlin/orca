@@ -772,10 +772,17 @@ async function probeRequiredNativeDeps(
     return probe.includes('ORCA-NATIVE-DEPS-OK')
       ? { status: 'ok', missing: [] }
       : { status: 'blocked', missing: missingNativeDepsFromProbe(probe) }
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted()
     // Why: an unanswered probe says nothing about the deps; reporting MISSING here reset and
     // recompiled healthy relays, turning one dropped exec channel into a multi-minute reconnect.
+    // Logged because the silent path is the whole point: the loud symptom used to be the wrongful
+    // rebuild, so without this a dropped exec channel would leave no trace at all.
+    console.warn(
+      `[ssh-relay] Native deps probe unanswered at ${remoteDir}; launching without repair: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
     return { status: 'unverifiable', missing: [] }
   }
 }
