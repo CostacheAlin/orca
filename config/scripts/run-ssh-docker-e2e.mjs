@@ -33,15 +33,16 @@ if (runtime.status !== 0) {
 //     all. Recorded as a real gap, not as coverage living somewhere else.
 //   ssh-codex-display-artifacts-repro.spec.ts — installs a real remote codex binary that CI
 //     runners do not have (observed as `spawn codex ENOENT`). Runs in no CI lane at all.
-//   ssh-docker-bulk-open-freeze-repro.spec.ts — two reasons, both disqualifying:
+//   ssh-docker-bulk-open-freeze-repro.spec.ts — one reason now, not two:
 //     (a) it is a perf oracle, not a correctness one: SOFT_FREEZE_LAG_MS=2500 /
 //         HARD_FREEZE_LAG_MS=5000 measured by a renderer lag probe under a deliberate
 //         5-pane output flood on a 420s budget. Same rule as ssh-docker-relay-perf above.
-//     (b) it is ROTTED: four call sites are out of date against terminal.ts's current
-//         helpers — execInTerminal gained a ptyId parameter and splitActiveTerminalPane
-//         gained a direction, so it cannot compile, let alone pass. Repairing it needs two
-//         semantic decisions (which ptyId to capture, which split direction) that change
-//         what the repro measures. Tracked in stablyai/orca#16764.
+//     (b) NO LONGER TRUE. It was rotted (#16764) and is now repaired and passing: the four
+//         stale call sites are fixed, it connects after session restore instead of before,
+//         and readiness keys on the repeating flood marker rather than a one-shot READY line
+//         the flood buries within ~16ms. Observed on a Docker SSH host: hidden-flood lag
+//         2.2ms, bulk-open lag 27.3ms, interaction 55.1ms — far under both budgets. Only
+//         reason (a) keeps it out of this lane.
 //
 // Why both projects: ssh-port-forward-lifecycle is @headful, which the headless project
 // grep-inverts away.
