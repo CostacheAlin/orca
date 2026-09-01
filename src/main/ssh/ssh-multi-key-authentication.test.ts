@@ -123,6 +123,15 @@ describe('ordered SSH private-key authentication', () => {
     expect(mockReadFileSync).not.toHaveBeenCalledWith('/keys/stale-imported')
   })
 
+  it('still offers the ssh-agent when no readable key precedes it', () => {
+    vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent.sock')
+    const config = buildConnectConfig(makeTarget({ identityFile: undefined }), null)
+
+    expect(nextAuth(config, true)).toMatchObject({ type: 'none' })
+    expect(nextAuth(config, false)).toMatchObject({ type: 'agent', agent: '/tmp/agent.sock' })
+    expect(nextAuth(config, false)).toBe('keyboard-interactive')
+  })
+
   it('keeps explicit manual keys and unresolved imported keys as singular overrides', () => {
     const manual = buildConnectConfig(
       makeTarget({
