@@ -55,11 +55,11 @@ test.describe('R2 Docker SSH bulk-open freeze', () => {
   test('bulk-open many flooding SSH terminals and measure renderer lag @freeze-repro', async ({
     orcaPage,
     registerPostElectronShutdownCleanup
-  }) => {
+  }, testInfo) => {
     test.setTimeout(420_000)
     let target: DockerSshRelayTarget | null = null
     try {
-      target = startDockerSshRelayTarget()
+      target = startDockerSshRelayTarget(testInfo)
       registerPostElectronShutdownCleanup(async () => {
         if (target) {
           cleanupDockerSshRelayTarget(target)
@@ -74,15 +74,16 @@ test.describe('R2 Docker SSH bulk-open freeze', () => {
 
       const runId = `${Date.now()}`
       // First terminal on the SSH worktree.
-      await waitForActiveTerminalManager(orcaPage)
-      await execInTerminal(orcaPage, continuousFloodCommand(runId, 0))
+      await waitForActiveTerminalManager(orcaPage, 60_000)
+      const firstPtyId = await waitForActivePanePtyId(orcaPage, 60_000)
+      await execInTerminal(orcaPage, firstPtyId, continuousFloodCommand(runId, 0))
       await waitForTerminalOutput(orcaPage, `READY:SSH_BULK_${runId}_0`, 60_000)
 
       for (let i = 1; i < SESSION_SPLITS; i += 1) {
-        await splitActiveTerminalPane(orcaPage)
+        await splitActiveTerminalPane(orcaPage, 'vertical')
         await focusLastTerminalPane(orcaPage)
-        await waitForActivePanePtyId(orcaPage, 30_000)
-        await execInTerminal(orcaPage, continuousFloodCommand(runId, i))
+        const panePtyId = await waitForActivePanePtyId(orcaPage, 30_000)
+        await execInTerminal(orcaPage, panePtyId, continuousFloodCommand(runId, i))
         await waitForTerminalOutput(orcaPage, `READY:SSH_BULK_${runId}_${i}`, 60_000)
       }
 
