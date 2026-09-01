@@ -16,7 +16,7 @@ import {
   type DockerSshRelayTarget
 } from './helpers/docker-ssh-relay-target'
 import { connectDockerSshRelayTarget } from './helpers/docker-ssh-relay-connection'
-import { waitForActiveWorktree, waitForSessionReady } from './helpers/store'
+import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 import {
   execInTerminal,
   focusLastTerminalPane,
@@ -31,6 +31,7 @@ import { HARD_FREEZE_LAG_MS, SOFT_FREEZE_LAG_MS } from './helpers/remote-session
 const RUN_DOCKER_SSH = process.env.ORCA_E2E_SSH_DOCKER === '1'
 const REPORT_DIR = path.join(process.cwd(), 'test-results', 'freeze-repro')
 const SESSION_SPLITS = 5
+const FLOOD_READ_CHARS = 80_000
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
@@ -66,25 +67,31 @@ test.describe('R2 Docker SSH bulk-open freeze', () => {
         }
       })
 
+      // Why: session restore must settle before the remote worktree is added, or the
+      // seeded terminal tab races tab hydration and never binds to the remote PTY.
+      await waitForSessionReady(orcaPage)
+      await waitForActiveWorktree(orcaPage)
       await connectDockerSshRelayTarget(orcaPage, target, {
         remotePath: DOCKER_SSH_RELAY_REMOTE_REPO_PATH
       })
-      await waitForSessionReady(orcaPage)
-      await waitForActiveWorktree(orcaPage)
 
       const runId = `${Date.now()}`
       // First terminal on the SSH worktree.
+      await ensureTerminalVisible(orcaPage, 45_000)
       await waitForActiveTerminalManager(orcaPage, 60_000)
       const firstPtyId = await waitForActivePanePtyId(orcaPage, 60_000)
       await execInTerminal(orcaPage, firstPtyId, continuousFloodCommand(runId, 0))
-      await waitForTerminalOutput(orcaPage, `READY:SSH_BULK_${runId}_0`, 60_000)
+      // Why: the one-shot READY line is buried by the 2KB/8ms flood within ~16ms, so it is
+      // unobservable through the terminal read window. The repeating BG marker is the only
+      // stable readiness signal, and it also proves the pane is actually flooding.
+      await waitForTerminalOutput(orcaPage, `BG:SSH_BULK_${runId}_0:`, 60_000, FLOOD_READ_CHARS)
 
       for (let i = 1; i < SESSION_SPLITS; i += 1) {
         await splitActiveTerminalPane(orcaPage, 'vertical')
         await focusLastTerminalPane(orcaPage)
         const panePtyId = await waitForActivePanePtyId(orcaPage, 30_000)
         await execInTerminal(orcaPage, panePtyId, continuousFloodCommand(runId, i))
-        await waitForTerminalOutput(orcaPage, `READY:SSH_BULK_${runId}_${i}`, 60_000)
+        await waitForTerminalOutput(orcaPage, `BG:SSH_BULK_${runId}_${i}:`, 60_000, FLOOD_READ_CHARS)
       }
 
       // Leave the workspace view so panes go inactive while flooding.
