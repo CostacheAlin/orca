@@ -170,11 +170,18 @@ export function getRepoExecutionHostId(
 // field and the unified `executionHostId`. Routing that reads the raw field answers
 // "local" for a row that only carries `ssh:<target>`, which runs a remote operation
 // on the client. Resolve the host first, then read the connection off it.
+//
+// Why the fallback: a row whose execution host is a *runtime* can still reach a nested
+// SSH target, and that target only ever appears in `connectionId`. Returning null for
+// those rows answers "local" for a nested-SSH worktree — the same defect in reverse.
 export function getRepoSshConnectionId(
   repo: Pick<Repo, 'connectionId' | 'executionHostId'>
 ): string | null {
   const parsed = parseExecutionHostId(getRepoExecutionHostId(repo))
-  return parsed?.kind === 'ssh' ? parsed.targetId : null
+  if (parsed?.kind === 'ssh') {
+    return parsed.targetId
+  }
+  return normalizeHostPart(repo.connectionId) ?? null
 }
 
 export function getSshTargetIdForExecutionHost(
