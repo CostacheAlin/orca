@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RelayDispatcher } from './dispatcher'
-import { encodeKeepAliveFrame, KEEPALIVE_SEND_MS, TIMEOUT_MS } from './protocol'
+import { encodeJsonRpcFrame, encodeKeepAliveFrame, KEEPALIVE_SEND_MS, TIMEOUT_MS } from './protocol'
 
 // The relay had no inbound-liveness signal at all: its writer parks forever on a half-open link, so
 // an abandoned viewer kept its owner lease and left the PTYs it held paused until the process died.
@@ -70,6 +70,25 @@ describe('RelayDispatcher silent-client reaper', () => {
     const clientId = dispatcher.attachClient(() => true)
 
     vi.advanceTimersByTime(TIMEOUT_MS * 5)
+
+    expect(detachListener).not.toHaveBeenCalledWith(clientId, expect.anything())
+  })
+
+  it('never reaps a client that does not send keepalives at all', () => {
+    // The remote `orca` CLI opens the socket, sends one `orca.cli` request and then waits for a
+    // result budgeted in minutes (remote-cli-timeout.ts: 5min default, 10min for wait, 11min for
+    // orchestration ask). It has no keepalive timer, so judging it on inbound silence would abort
+    // `terminal wait`, `--wait` and `orchestration ask` after 20s.
+    const detachListener = vi.fn()
+    dispatcher = new RelayDispatcher(() => true)
+    dispatcher.onClientDetached(detachListener)
+    const clientId = dispatcher.attachClient(() => true)
+    dispatcher.feedClient(
+      clientId,
+      encodeJsonRpcFrame({ jsonrpc: '2.0', id: 1, method: 'orca.cli', params: {} }, 1, 0)
+    )
+
+    vi.advanceTimersByTime(TIMEOUT_MS * 20)
 
     expect(detachListener).not.toHaveBeenCalledWith(clientId, expect.anything())
   })

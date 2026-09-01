@@ -123,6 +123,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
       nextOutgoingSeq: 1,
       highestReceivedSeq: 0,
       lastReceivedAt: null,
+      keepaliveObserved: false,
       generation: 0,
       closed: false,
       droppedNotificationLog: null,
@@ -146,6 +147,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
     client.nextOutgoingSeq = 1
     client.highestReceivedSeq = 0
     client.lastReceivedAt = null
+    client.keepaliveObserved = false
     client.decoder.reset()
     client.generation++
     client.closed = false
@@ -211,8 +213,13 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
       // handshaking, and on a slow link that can exceed the window. Reaping a client that has never
       // spoken would break the connect it is still completing, so silence only counts against a
       // client that has already proven it can talk.
+      // Why keepaliveObserved gates this: not every client speaks the keepalive protocol. The
+      // remote `orca` CLI sends one `orca.cli` request and waits for a result budgeted in minutes
+      // (src/relay/remote-cli-timeout.ts), so judging it on inbound silence would kill
+      // `terminal wait`, `--wait` and `orchestration ask` after 20s.
       if (
         client.closed ||
+        !client.keepaliveObserved ||
         client.lastReceivedAt === null ||
         now - client.lastReceivedAt <= TIMEOUT_MS
       ) {

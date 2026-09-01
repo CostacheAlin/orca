@@ -52,9 +52,14 @@ export type RelayClient = {
   nextOutgoingSeq: number
   highestReceivedSeq: number
   // Why: the relay had no inbound-liveness signal at all, so a half-open client was never reaped
-  // and kept its owner lease and paused PTYs indefinitely. Null until the first inbound frame: a
-  // client that has never spoken has not yet proven it can, so it is not yet judged on silence.
+  // and kept its owner lease and paused PTYs indefinitely.
   lastReceivedAt: number | null
+  // Why silence is only held against a client that sends keepalives: not every client speaks that
+  // protocol. The remote `orca` CLI opens the socket, sends one `orca.cli` request and then waits
+  // for a result that is deliberately budgeted in minutes (src/relay/remote-cli-timeout.ts), so
+  // judging it on inbound silence would kill `terminal wait`, `--wait` and `orchestration ask`
+  // after 20s. Only a client that has proven it participates is eligible.
+  keepaliveObserved: boolean
   generation: number
   closed: boolean
   droppedNotificationLog: DroppedProducerNotificationLog | null

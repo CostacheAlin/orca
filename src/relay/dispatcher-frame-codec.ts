@@ -22,6 +22,7 @@ export abstract class RelayDispatcherFrameCodec extends RelayDispatcherCapacityS
     }
 
     if (frame.type === MessageType.KeepAlive) {
+      client.keepaliveObserved = true
       return
     }
 
