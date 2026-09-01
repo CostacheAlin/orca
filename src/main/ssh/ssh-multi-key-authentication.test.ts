@@ -77,6 +77,18 @@ function nextAuth(
   return result ?? false
 }
 
+function partialSuccessAuth(
+  config: ConnectConfig,
+  authsLeft: AuthenticationType[]
+): AuthenticationType | AnyAuthMethod | false {
+  let result: AuthenticationType | AnyAuthMethod | false | undefined
+  const handler = config.authHandler as AuthHandlerMiddleware
+  handler(authsLeft, true, (attempt) => {
+    result = attempt
+  })
+  return result ?? false
+}
+
 describe('ordered SSH private-key authentication', () => {
   beforeEach(() => {
     vi.stubEnv('SSH_AUTH_SOCK', '')
@@ -128,9 +140,53 @@ describe('ordered SSH private-key authentication', () => {
     })
 
     expect(manual.privateKey).toEqual(Buffer.from('/keys/manual'))
-    expect(manual.authHandler).toBeUndefined()
     expect(unresolvedImport.privateKey).toEqual(Buffer.from('/keys/stale-imported'))
-    expect(unresolvedImport.authHandler).toBeUndefined()
+    // Single-key targets are still ordered by Orca's handler so an MFA host reaches
+    // keyboard-interactive once per stage rather than once per connection.
+    expect(nextAuth(manual, true)).toMatchObject({ type: 'none' })
+    expect(nextAuth(manual, false)).toMatchObject({
+      type: 'publickey',
+      key: Buffer.from('/keys/manual')
+    })
+    expect(nextAuth(manual, false)).toBe('keyboard-interactive')
+  })
+
+  it('re-offers keyboard-interactive for each partial-success MFA stage', () => {
+    const config = buildConnectConfig(makeTarget(), makeResolved(), {
+      includeAgent: false,
+      includePrivateKey: true
+    })
+    config.password = 'stage-one'
+
+    expect(nextAuth(config, true)).toMatchObject({ type: 'none' })
+    expect(nextAuth(config, false)).toMatchObject({ type: 'password' })
+    // Partial success: the host accepted the password and now offers only the challenge.
+    expect(partialSuccessAuth(config, ['keyboard-interactive'])).toBe('keyboard-interactive')
+    expect(partialSuccessAuth(config, ['keyboard-interactive'])).toBe('keyboard-interactive')
+  })
+
+  it('stops re-offering methods the host no longer accepts after a partial success', () => {
+    const config = buildConnectConfig(makeTarget(), makeResolved(), {
+      includeAgent: false,
+      includePrivateKey: true
+    })
+
+    expect(nextAuth(config, true)).toMatchObject({ type: 'none' })
+    expect(partialSuccessAuth(config, ['keyboard-interactive'])).toBe('keyboard-interactive')
+    expect(nextAuth(config, false)).toBe(false)
+  })
+
+  it('bounds the number of partial-success stages it will answer', () => {
+    const config = buildConnectConfig(makeTarget(), makeResolved(), {
+      includeAgent: false,
+      includePrivateKey: true
+    })
+
+    expect(nextAuth(config, true)).toMatchObject({ type: 'none' })
+    for (let stage = 0; stage < 4; stage += 1) {
+      expect(partialSuccessAuth(config, ['keyboard-interactive'])).toBe('keyboard-interactive')
+    }
+    expect(partialSuccessAuth(config, ['keyboard-interactive'])).toBe(false)
   })
 
   it('offers every resolved key for a manually owned config-picker target', () => {

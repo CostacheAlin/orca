@@ -108,7 +108,9 @@ type SshRemoteFileOptions = {
 
 /** Bounds the trust-source reads that run before the handshake, which nothing else times out. */
 const HOST_KEY_SOURCE_READ_TIMEOUT_MS = 5_000
-const SSH_KEYBOARD_INTERACTIVE_MAX_ROUNDS = 4
+// Counts every INFO_REQUEST of the handshake, so it must cover each partial-success stage the auth
+// queue will answer (MAX_PARTIAL_SUCCESS_STAGES) times the rounds a PAM stack spends per stage.
+const SSH_KEYBOARD_INTERACTIVE_MAX_ROUNDS = 8
 const SSH_KEYBOARD_INTERACTIVE_READY_TIMEOUT_MS = SSH_CREDENTIAL_TIMEOUT_MS + 5_000
 const SSH_KEYBOARD_INTERACTIVE_MAX_PROMPTS = 8
 const SSH_KEYBOARD_INTERACTIVE_TEXT_MAX = 4_096
