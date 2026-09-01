@@ -5,6 +5,7 @@ import {
   PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
 } from '../../shared/pty-consumer-session'
+import { SSH_OWNER_RECOVERY_WAIT_MS } from './ssh-owner-recovery-retry'
 import { SshRelaySession } from './ssh-relay-session'
 import { createMockDeps } from './ssh-relay-session-test-fixtures'
 import { getSshPtyConsumerRecovery } from './ssh-pty-consumer-recovery'
@@ -229,6 +230,66 @@ describe('SshRelaySession consumer recovery durability', () => {
       await failed
 
       expect(openConsumerSessionMock.mock.calls.length).toBeGreaterThan(1)
+      expect(deps.mockStore.removeSshPtyConsumerRecovery).not.toHaveBeenCalled()
+      session.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-asks the claim without a proof the relay already superseded', async () => {
+    vi.useFakeTimers()
+    try {
+      const targetId = 'target-superseded-owner-proof-recovery'
+      const deps = createMockDeps()
+      vi.mocked(deps.mockStore.getSshPtyConsumerRecovery).mockReturnValue({
+        targetId,
+        clientInstanceId: 'persisted-client',
+        serverBuildId: 'test-relay-build',
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ownerLease: 'persisted-owner'
+      })
+      // The relay's answer depends only on the proof: presenting it again always loses.
+      openConsumerSessionMock.mockImplementation(
+        async (_mux, options: { resume?: unknown; clientInstanceId: string }) => {
+          if (options.resume) {
+            throw Object.assign(new Error('Owner recovery generation was superseded'), {
+              code: PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+            })
+          }
+          return {
+            state: {
+              mode: 'negotiated',
+              clientInstanceId: options.clientInstanceId,
+              clientGeneration: 4,
+              ownerGeneration: 9,
+              ownerLease: 'fresh-owner'
+            },
+            resumed: false
+          }
+        }
+      )
+      const session = new SshRelaySession(
+        targetId,
+        deps.getMainWindow,
+        deps.mockStore,
+        deps.mockPortForward
+      )
+
+      const establishing = session.establish(deps.mockConn)
+      await vi.advanceTimersByTimeAsync(SSH_OWNER_RECOVERY_WAIT_MS + 1_000)
+      await establishing
+
+      expect(
+        openConsumerSessionMock.mock.calls.some(
+          ([, options]) => (options as { resume?: unknown }).resume === undefined
+        )
+      ).toBe(true)
+      expect(deps.mockStore.upsertSshPtyConsumerRecovery).toHaveBeenCalledWith(
+        expect.objectContaining({ ownerGeneration: 9, ownerLease: 'fresh-owner' })
+      )
+      // The recovery identity survives; only the refuted proof is dropped.
       expect(deps.mockStore.removeSshPtyConsumerRecovery).not.toHaveBeenCalled()
       session.dispose()
     } finally {

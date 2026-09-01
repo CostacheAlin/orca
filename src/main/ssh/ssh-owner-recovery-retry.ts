@@ -3,7 +3,8 @@ import {
   PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR,
   PTY_CONSUMER_OWNER_HELD_SELF_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
-  PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+  PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR,
+  PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR
 } from '../../shared/pty-consumer-session'
 
 // Why: bound polling when publication is settling or a superseded attempt is closing its transport.
@@ -20,6 +21,18 @@ export type SshOwnerRecoveryRetryReason =
   | 'publication-pending'
   | 'disconnected-holder'
   | 'self-holder'
+
+// Why both codes: each is the relay telling us the proof we just presented can never be accepted
+// again — a stale lease, or a generation the relay has already superseded. Re-presenting it produces
+// the identical refusal forever, so the only proof-bearing state the client holds must be dropped and
+// the claim re-asked without it. Nothing here says a remote PTY died; the relay keeps them either way.
+export function isPtyConsumerOwnerProofRefuted(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code
+  return (
+    code === PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR ||
+    code === PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+  )
+}
 
 // Why exported: an attached holder is a decision, not a transport fault, so callers must be able to
 // report it as blocked instead of feeding it to reconnect classification as an unexplained failure.

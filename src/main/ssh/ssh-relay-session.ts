@@ -85,8 +85,8 @@ import {
   hasHostAuthoritativeTerminalMembership
 } from '../runtime/workspace-session-terminal-membership-authority'
 import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
-import { PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR } from '../../shared/pty-consumer-session'
 import {
+  isPtyConsumerOwnerProofRefuted,
   isSshOwnerAdmissionBlocked,
   retrySshOwnerRecoveryWhileBlocked
 } from './ssh-owner-recovery-retry'
@@ -1162,10 +1162,11 @@ export class SshRelaySession {
     try {
       admission = await this.admitPtyConsumerOwner(mux, previousOwner, options, ownsAttempt)
     } catch (error) {
-      if (
-        !previousOwner ||
-        (error as { code?: unknown }).code !== PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR
-      ) {
+      // Why a refuted proof is dropped rather than retried: the refusal is a pure function of the
+      // proof we sent and the record the relay already holds, so every later attempt reproduces it
+      // byte for byte. Keeping the proof turned a reconnect into a loop only a redeployed relay
+      // could break (#12895, #12931).
+      if (!previousOwner || !isPtyConsumerOwnerProofRefuted(error)) {
         throw error
       }
       this.voidPtyConsumerCheckpoints(previousOwner, ownsAttempt)
