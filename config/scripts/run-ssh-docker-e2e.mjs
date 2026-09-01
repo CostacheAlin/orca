@@ -71,6 +71,7 @@ const result = spawnSync(
     'tests/e2e/ssh-ai-vault-session-history.spec.ts',
     'tests/e2e/ssh-cold-activation-restore.spec.ts',
     'tests/e2e/ssh-cold-hydration-gap-tab-seeding.spec.ts',
+    'tests/e2e/ssh-docker-half-open-link.spec.ts',
     'tests/e2e/ssh-docker-reconnect-pane-restore.spec.ts',
     'tests/e2e/ssh-docker-resource-accumulation.spec.ts',
     'tests/e2e/ssh-external-image-preview.spec.ts',
