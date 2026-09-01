@@ -235,6 +235,79 @@ describe('SSH fresh agent-session create operations', () => {
     expect(request).toHaveBeenCalledTimes(2)
   })
 
+  it('leaves the replay fence off a create the disposed mux never dispatched', async () => {
+    const transport = createTransport()
+    const mux = new SshChannelMultiplexer(transport)
+    const liveProvider = new SshPtyProvider('conn-1', mux)
+    const operationId = 'e'.repeat(43)
+
+    // Why: prime the memoized capability probe, so the second spawn reaches the dispatch seam
+    // without a round trip — the ordering that lets a mid-preflight dispose land before it.
+    const primed = liveProvider.spawn({
+      cols: 80,
+      rows: 24,
+      command: 'codex',
+      agentSessionCreateOperationId: operationId
+    })
+    const capabilityRequest = await waitForRequest(transport, 'pty.getCapabilities')
+    transport.deliver(
+      responseFrame(
+        capabilityRequest.id as number,
+        { agentSessionCreateOperationVersion: AGENT_SESSION_CREATE_OPERATION_PROTOCOL_VERSION },
+        1
+      )
+    )
+    const spawnRequest = await waitForRequest(transport, 'pty.spawn')
+    transport.deliver(
+      responseFrame(spawnRequest.id as number, { id: 'pty-1', incarnationId: 'incarnation-1' }, 2)
+    )
+    await expect(primed).resolves.toMatchObject({ incarnationId: 'incarnation-1' })
+
+    mux.dispose('connection_lost')
+    const failure = await liveProvider
+      .spawn({
+        cols: 80,
+        rows: 24,
+        command: 'codex',
+        agentSessionCreateOperationId: 'f'.repeat(43)
+      })
+      .catch((error: unknown) => error)
+
+    expect((failure as { code?: unknown }).code).toBe('CONNECTION_LOST')
+    expect(failure).not.toHaveProperty('agentSessionOperationOutcome')
+    expect(
+      requestPayloads(transport).filter((payload) => payload.method === 'pty.spawn')
+    ).toHaveLength(1)
+  })
+
+  it('keeps the replay fence on a create the link lost after dispatch', async () => {
+    const transport = createTransport()
+    const mux = new SshChannelMultiplexer(transport)
+    const liveProvider = new SshPtyProvider('conn-1', mux)
+
+    const spawn = liveProvider.spawn({
+      cols: 80,
+      rows: 24,
+      command: 'codex',
+      agentSessionCreateOperationId: 'g'.repeat(43)
+    })
+    const capabilityRequest = await waitForRequest(transport, 'pty.getCapabilities')
+    transport.deliver(
+      responseFrame(
+        capabilityRequest.id as number,
+        { agentSessionCreateOperationVersion: AGENT_SESSION_CREATE_OPERATION_PROTOCOL_VERSION },
+        1
+      )
+    )
+    await waitForRequest(transport, 'pty.spawn')
+
+    mux.dispose('connection_lost')
+    const failure = await spawn.catch((error: unknown) => error)
+
+    expect((failure as { code?: unknown }).code).toBe('CONNECTION_LOST')
+    expect(failure).toMatchObject({ agentSessionOperationOutcome: 'unknown' })
+  })
+
   it('withholds same-turn source data until claim validation and isolates rollback', async () => {
     const transport = createTransport()
     const mux = new SshChannelMultiplexer(transport)

@@ -81,6 +81,20 @@ export function isSshMuxRequestTimeoutError(error: unknown): boolean {
   )
 }
 
+// Why: `request` rejects a disposed mux and an already-aborted signal before it frames anything,
+// so the peer provably never saw those calls. A caller fencing a possibly-applied mutation needs
+// that apart from a mid-flight loss, which carries the identical code and message.
+export function isUndispatchedSshRequestError(error: unknown): boolean {
+  return (
+    (error as { sshRequestUndispatched?: unknown } | null | undefined)?.sshRequestUndispatched ===
+    true
+  )
+}
+
+function markUndispatched<T extends Error>(error: T): T {
+  return Object.assign(error, { sshRequestUndispatched: true as const })
+}
+
 export class SshChannelMultiplexer {
   private decoder: FrameDecoder
   private transport: MultiplexerTransport
@@ -222,12 +236,12 @@ export class SshChannelMultiplexer {
     options?: SshMultiplexerRequestOptions
   ): Promise<unknown> {
     if (this.disposed) {
-      throw this.disposedError()
+      throw markUndispatched(this.disposedError())
     }
     if (options?.signal?.aborted) {
       const error = new Error(`Request "${method}" was cancelled`) as Error & { name: string }
       error.name = 'AbortError'
-      throw error
+      throw markUndispatched(error)
     }
 
     const id = this.nextRequestId++

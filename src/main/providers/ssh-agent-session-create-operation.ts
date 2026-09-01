@@ -1,4 +1,7 @@
-import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
+import {
+  isUndispatchedSshRequestError,
+  type SshChannelMultiplexer
+} from '../ssh/ssh-channel-multiplexer'
 import { AGENT_SESSION_CREATE_OPERATION_PROTOCOL_VERSION } from '../../shared/agent-session-host-authority'
 import { isPtyIncarnationId } from '../../shared/pty-incarnation'
 import type { PtySpawnResult } from './pty-spawn-result'
@@ -66,7 +69,10 @@ export async function requestSshAgentSessionCreate(args: {
         : undefined
     return await args.mux.request('pty.spawn', args.params, options)
   } catch (error) {
-    if (!args.operationId) {
+    // Why: a spawn the mux never framed cannot have left a PTY on the host, so fencing it would
+    // retain the 24h replay tombstone over an operation id whose create was never issued — every
+    // later replay then rethrows this failure instead of starting the agent the user asked for.
+    if (!args.operationId || isUndispatchedSshRequestError(error)) {
       throw error
     }
     const spawnError = error instanceof Error ? error : new Error(String(error))
