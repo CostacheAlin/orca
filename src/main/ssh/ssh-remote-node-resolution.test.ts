@@ -133,8 +133,108 @@ describe('resolveRemoteNodePath', () => {
 
     const callScript = execCommandMock.mock.calls[0]![1] as string
     expect(callScript).toContain('nvm_dirs=${NVM_DIR:-"$HOME/.nvm"}')
-    expect(callScript).toContain('NVM_DIR[[:space:]]*=')
+    expect(callScript).toContain('orca_dotfile_dirs NVM_DIR')
     expect(callScript).toContain('"$nvm_dir"/versions/node/*/bin/node')
+  })
+
+  it('respects a custom MISE_DATA_DIR instead of hardcoding $HOME/.local/share/mise', async () => {
+    execCommandMock
+      .mockResolvedValueOnce('/opt/mise-data/installs/node/v20.11.0/bin/node\n')
+      .mockResolvedValueOnce('v20.11.0\n')
+
+    await resolveRemoteNodePath(conn)
+
+    const callScript = execCommandMock.mock.calls[0]![1] as string
+    expect(callScript).toContain('mise_dirs=${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}')
+    expect(callScript).toContain('orca_dotfile_dirs MISE_DATA_DIR')
+    expect(callScript).toContain('"$mise_dir"/installs/node/*/bin/node')
+    expect(callScript).toContain('"$mise_dir/shims/node"')
+  })
+
+  it('finds node under a MISE_DATA_DIR exported from a shell dotfile', async () => {
+    execCommandMock
+      .mockResolvedValueOnce('/home/u/.local/share/mise/shims/node\n')
+      .mockResolvedValueOnce('v20.11.0\n')
+
+    await resolveRemoteNodePath(conn)
+
+    const callScript = execCommandMock.mock.calls[0]![1] as string
+    const home = mkdtempSync(path.join(os.tmpdir(), 'orca-mise-probe-'))
+    try {
+      const shimPath = path.join(home, 'custom-mise/shims/node')
+      const installPath = path.join(home, 'custom-mise/installs/node/v20.11.0/bin/node')
+      for (const target of [shimPath, installPath]) {
+        mkdirSync(path.dirname(target), { recursive: true })
+        writeFileSync(target, '#!/bin/sh\nprintf "v20.11.0\\n"\n')
+        chmodSync(target, 0o755)
+      }
+      writeFileSync(path.join(home, '.zshrc'), 'export MISE_DATA_DIR=~/custom-mise\n')
+
+      const output = execFileSync('/bin/sh', ['-c', callScript], {
+        encoding: 'utf8',
+        env: { HOME: home, PATH: '/usr/bin:/bin' }
+      })
+
+      const lines = output.split('\n')
+      expect(lines).toContain(shimPath)
+      expect(lines).toContain(installPath)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('finds node under a MISE_DATA_DIR present only in the probe environment', async () => {
+    execCommandMock
+      .mockResolvedValueOnce('/home/u/.local/share/mise/shims/node\n')
+      .mockResolvedValueOnce('v20.11.0\n')
+
+    await resolveRemoteNodePath(conn)
+
+    const callScript = execCommandMock.mock.calls[0]![1] as string
+    const home = mkdtempSync(path.join(os.tmpdir(), 'orca-mise-env-probe-'))
+    try {
+      const miseDataDir = path.join(home, 'env-mise')
+      const installPath = path.join(miseDataDir, 'installs/node/v20.11.0/bin/node')
+      mkdirSync(path.dirname(installPath), { recursive: true })
+      writeFileSync(installPath, '#!/bin/sh\nprintf "v20.11.0\\n"\n')
+      chmodSync(installPath, 0o755)
+
+      const output = execFileSync('/bin/sh', ['-c', callScript], {
+        encoding: 'utf8',
+        env: { HOME: home, MISE_DATA_DIR: miseDataDir, PATH: '/usr/bin:/bin' }
+      })
+
+      expect(output.split('\n')).toContain(installPath)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to XDG_DATA_HOME for mise installs when MISE_DATA_DIR is unset', async () => {
+    execCommandMock
+      .mockResolvedValueOnce('/home/u/.local/share/mise/shims/node\n')
+      .mockResolvedValueOnce('v20.11.0\n')
+
+    await resolveRemoteNodePath(conn)
+
+    const callScript = execCommandMock.mock.calls[0]![1] as string
+    const home = mkdtempSync(path.join(os.tmpdir(), 'orca-mise-xdg-probe-'))
+    try {
+      const xdgDataHome = path.join(home, 'xdg')
+      const installPath = path.join(xdgDataHome, 'mise/installs/node/v20.11.0/bin/node')
+      mkdirSync(path.dirname(installPath), { recursive: true })
+      writeFileSync(installPath, '#!/bin/sh\nprintf "v20.11.0\\n"\n')
+      chmodSync(installPath, 0o755)
+
+      const output = execFileSync('/bin/sh', ['-c', callScript], {
+        encoding: 'utf8',
+        env: { HOME: home, XDG_DATA_HOME: xdgDataHome, PATH: '/usr/bin:/bin' }
+      })
+
+      expect(output.split('\n')).toContain(installPath)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('quotes version-manager directory prefixes while leaving globs active', async () => {

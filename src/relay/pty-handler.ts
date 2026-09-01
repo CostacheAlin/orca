@@ -9,7 +9,6 @@ import { WINDOWS_GIT_BASH_SHELL } from '../shared/windows-terminal-shell'
 import type { RelayDispatcher, RequestContext } from './dispatcher'
 import {
   resolveDefaultShell,
-  resolveDefaultCwd,
   resolveProcessCwd,
   processHasChildren,
   getForegroundProcessName,
@@ -29,6 +28,11 @@ import {
   normalizeRuntimePathForComparison
 } from '../shared/cross-platform-path'
 import { splitWorktreeId } from '../shared/worktree/id'
+import {
+  formatUnresolvedRelaySpawnCwdMessage,
+  resolveRelaySpawnCwd,
+  type RelaySpawnCwdResolution
+} from './pty-spawn-cwd'
 import { PhysicalExitTracker } from '../shared/physical-exit-tracker'
 import { SHELL_READY_MARKER_PREFIX } from '../main/shell-ready-marker-scanner'
 import {
@@ -112,6 +116,26 @@ export function formatNodePtyUnavailableMessage(platform: NodeJS.Platform): stri
       ? "node-pty's native binding is not loadable on this host. If it is missing the C/C++ build tools needed to compile node-pty, install make, a C++ compiler, and python3 on the remote host, then reconnect. Otherwise reconnect to reinstall the relay's native modules, and check that the remote Node.js version and architecture match the installed binding."
       : "node-pty's native binding failed to load on this host. Reconnect to reinstall the relay's native modules; if it persists, check that the remote Node.js version and architecture match the installed binding."
   return `Remote terminals are unavailable: ${remedy}`
+}
+
+/**
+ * Spawn cwd, or a refusal. Both `spawnOnce` (admission fence) and `spawnAfterAdmission` (the native
+ * spawn) resolve through here so the fence can never be keyed on a directory the spawn won't use.
+ */
+function requireRelaySpawnCwd(
+  params: Record<string, unknown>,
+  env: Record<string, string> | undefined
+): string {
+  const resolution: RelaySpawnCwdResolution = resolveRelaySpawnCwd({
+    requestedCwd: params.cwd,
+    worktreeId: typeof params.worktreeId === 'string' ? params.worktreeId : env?.ORCA_WORKTREE_ID,
+    env,
+    launchAgent: isTuiAgent(params.launchAgent) ? params.launchAgent : undefined
+  })
+  if (resolution.kind === 'unresolved') {
+    throw new Error(formatUnresolvedRelaySpawnCwdMessage(resolution.workspaceId))
+  }
+  return resolution.cwd
 }
 
 function isMissingNodePtyNativeBinding(error: unknown): boolean {
@@ -1623,7 +1647,7 @@ export class PtyHandler {
     const worktreeId =
       typeof params.worktreeId === 'string' ? params.worktreeId : env?.ORCA_WORKTREE_ID
     const worktreePath = worktreeId ? splitWorktreeId(worktreeId)?.worktreePath : undefined
-    const cwd = typeof params.cwd === 'string' ? params.cwd : resolveDefaultCwd()
+    const cwd = requireRelaySpawnCwd(params, env)
     const finishCreation = this.beginPtyCreation([worktreePath, cwd])
     let physicalSpawnCommitted = false
     const markPhysicalSpawnCommitted = (): void => {
@@ -1723,8 +1747,8 @@ export class PtyHandler {
 
     const cols = (params.cols as number) || 80
     const rows = (params.rows as number) || 24
-    const cwd = (params.cwd as string) || resolveDefaultCwd()
     const env = params.env as Record<string, string> | undefined
+    const cwd = requireRelaySpawnCwd(params, env)
     const envToDelete = sanitizeEnvToDelete(params.envToDelete)
     const explicitTerm =
       !envToDelete.includes('TERM') &&
