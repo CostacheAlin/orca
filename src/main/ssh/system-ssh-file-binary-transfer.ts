@@ -153,11 +153,48 @@ export async function uploadFileViaSystemSsh(
   }
 }
 
+/**
+ * #16432: Windows PowerShell 5.1 stops draining a redirected stdin over a non-pty ssh exec somewhere
+ * between 50KB and 1MB depending on the host's `DefaultShell`, and it hangs rather than failing. One
+ * write is therefore split into appends that stay an order of magnitude under the low end of that
+ * measured range, instead of one write sized by the payload.
+ */
+export const WINDOWS_STDIN_WRITE_CHUNK_BYTES = 32 * 1024
+
+/** No Windows stdin write should ever outlive this; a wedged PowerShell never closes on its own. */
+export const WINDOWS_STDIN_WRITE_TIMEOUT_MS = 60_000
+
 async function writeBufferViaSystemSshWindows(
   target: SshTarget,
   remotePath: string,
   contents: Buffer,
   options: SystemSshWriteBufferOptions
+): Promise<void> {
+  throwIfAborted(options.signal)
+  // An empty write still has to run: it is what creates (or truncates) the file.
+  for (let offset = 0; offset === 0 || offset < contents.length;) {
+    const end = Math.min(offset + WINDOWS_STDIN_WRITE_CHUNK_BYTES, contents.length)
+    await writeWindowsChunkViaSystemSsh(
+      target,
+      remotePath,
+      contents.subarray(offset, end),
+      // Only the first chunk carries the caller's create/truncate/exclusive mode; the rest extend it.
+      offset === 0 ? options : { ...options, append: true, exclusive: false },
+      offset
+    )
+    offset = end
+    if (offset >= contents.length) {
+      break
+    }
+  }
+}
+
+async function writeWindowsChunkViaSystemSsh(
+  target: SshTarget,
+  remotePath: string,
+  chunk: Buffer,
+  options: SystemSshWriteBufferOptions,
+  offset: number
 ): Promise<void> {
   throwIfAborted(options.signal)
   const channel = spawnSystemSshCommand(target, makeWindowsWriteFileCommand(remotePath, options), {
@@ -167,10 +204,14 @@ async function writeBufferViaSystemSshWindows(
   const closePromise = awaitWithSystemSshAbort(
     options.signal,
     () => channel.close(),
-    waitForChannelClose(channel, `write ${remotePath}`)
+    waitForChannelClose(
+      channel,
+      `write ${remotePath} at offset ${offset}`,
+      WINDOWS_STDIN_WRITE_TIMEOUT_MS
+    )
   )
   if (!options.signal?.aborted) {
-    channel.stdin.end(contents)
+    channel.stdin.end(chunk)
   }
   await closePromise
 }

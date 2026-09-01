@@ -48,6 +48,9 @@ export async function listRuntimeFiles(
     rootPath: string
     excludePaths?: string[]
     requestToken?: string
+    // Why: naming the cap is what makes a full page readable as "there is more" — the host bounds
+    // itself either way, but a caller that never states a limit cannot tell a bound from a total.
+    maxResults?: number
     signal?: AbortSignal
   }
 ): Promise<string[]> {
@@ -57,7 +60,8 @@ export async function listRuntimeFiles(
       rootPath: args.rootPath,
       connectionId: context.connectionId,
       excludePaths: args.excludePaths,
-      requestToken: args.requestToken
+      requestToken: args.requestToken,
+      ...(args.maxResults === undefined ? {} : { maxResults: args.maxResults })
     })
   }
   return callRuntimeRpc<string[]>(

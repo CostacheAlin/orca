@@ -25,6 +25,7 @@ import {
   writeRelayFile
 } from './fs-path-mutation-requests'
 import { buildExcludePathPrefixes } from '../shared/quick-open-filter'
+import { resolveQuickOpenResultLimit } from '../shared/quick-open-listing-limits'
 import { readRelayFileContent, readRelayFileStreamMetadata } from './fs-handler-file-read'
 import { readRelayFileRange } from './fs-handler-file-range'
 import { FileRangeReadRequestError } from '../shared/file-range-read'
@@ -206,12 +207,17 @@ export class FsHandler {
 
   private listFiles(params: Record<string, unknown>, context?: RequestContext): Promise<string[]> {
     const rootPath = expandTilde(params.rootPath as string)
-    const maxResults =
+    // Why: the cap applies whether or not the client asked for one. A relay that is only bounded
+    // when the caller remembers to send maxResults is not bounded — an older client, or a new call
+    // site that forgets, then makes the host serialize an arbitrarily large array into one response
+    // frame (#12547: 588k paths / 65MB, which fails as "Message too large" or over-capacity).
+    const requestedMaxResults =
       typeof params.maxResults === 'number' &&
       Number.isInteger(params.maxResults) &&
       params.maxResults > 0
-        ? Math.min(params.maxResults, 20_001)
+        ? params.maxResults
         : undefined
+    const maxResults = resolveQuickOpenResultLimit(requestedMaxResults)
     const searchQuery =
       typeof params.searchQuery === 'string' && params.searchQuery.trim().length > 0
         ? params.searchQuery

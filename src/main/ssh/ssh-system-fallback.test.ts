@@ -747,7 +747,7 @@ describe('spawnSystemSsh', () => {
     expect(args[standaloneControlIdx + 1]).toBe('none')
   })
 
-  it('uploads directories to Windows system SSH targets in one PowerShell batch', async () => {
+  it('uploads a Windows directory as a mkdir batch plus per-file writes, never one blob', async () => {
     const localDir = mkdtempSync(join(tmpdir(), 'orca-system-ssh-upload-'))
     writeFileSync(join(localDir, 'relay.js'), 'console.log("relay")')
     const spawned: EventedProcess[] = []
@@ -770,24 +770,17 @@ describe('spawnSystemSsh', () => {
     }
 
     const commands = spawnMock.mock.calls.map((call) => (call[1] as string[]).at(-1) ?? '')
-    expect(commands).toHaveLength(1)
+    // #16432: directories first (metadata only), then the file bytes on their own stdin. One batch
+    // meant base64-ing the whole bundle into a single PowerShell string, which the remote never read.
+    expect(commands).toHaveLength(2)
     expect(commands.every((command) => command.includes('powershell.exe'))).toBe(true)
     expect(commands.every((command) => !command.includes('/bin/sh'))).toBe(true)
     expect(commands.join('\n')).not.toContain('tar -xzf')
-    const payload = JSON.parse(spawned[0].stdin.end.mock.calls[0]?.[0] as string) as {
-      kind: string
-      path: string
-      contentsBase64?: string
-    }[]
-    expect(payload).toEqual(
-      expect.arrayContaining([
-        { kind: 'directory', path: 'C:/Users/me/.orca-remote/relay' },
-        {
-          kind: 'file',
-          path: 'C:/Users/me/.orca-remote/relay/relay.js',
-          contentsBase64: Buffer.from('console.log("relay")').toString('base64')
-        }
-      ])
+    expect(JSON.parse(spawned[0].stdin.end.mock.calls[0]?.[0] as string)).toEqual([
+      'C:/Users/me/.orca-remote/relay'
+    ])
+    expect(Buffer.from(spawned[1].stdin.end.mock.calls[0]?.[0] as Buffer).toString('utf-8')).toBe(
+      'console.log("relay")'
     )
   })
 
