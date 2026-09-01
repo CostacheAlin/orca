@@ -173,9 +173,13 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
         return
       }
       const now = Date.now()
-      // Why: after host sleep every client looks stale on the first tick back, which is the process
-      // having been paused, not the peers having died. Rebase, then judge on the next full window.
-      const resumedAfterPause = now - lastTickAt > TIMEOUT_MS
+      // Why this threshold and not TIMEOUT_MS: a healthy client answers the PREVIOUS tick, so its
+      // lastReceivedAt is already up to KEEPALIVE_SEND_MS + RTT old. A tick gap beyond
+      // TIMEOUT_MS - KEEPALIVE_SEND_MS therefore pushes staleness past the window on its own, and a
+      // rebase armed at TIMEOUT_MS would not have fired -- reaping every client after a host
+      // suspend, a VM migration, or the relay's own event loop stalling. Mirrors the client's
+      // WAKE_GAP_MS guard (ssh-channel-multiplexer.ts).
+      const resumedAfterPause = now - lastTickAt >= TIMEOUT_MS - KEEPALIVE_SEND_MS
       lastTickAt = now
       for (const client of this.clients.values()) {
         if (client.closed) {
@@ -209,6 +213,13 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
    */
   private reapSilentClients(now: number): void {
     for (const client of Array.from(this.clients.values())) {
+      // Why the primary is exempt: closing it tears down the relay's own stdin/stdout, and nothing
+      // in production revives it -- setWrite() has no non-test caller. The leak this exists for is
+      // a socket client holding an owner lease, and the launch channel's own liveness is already
+      // owned by the client-side dead-link check.
+      if (client === this.primaryClient) {
+        continue
+      }
       // Why the null check is not just defensive: a relay is launched before its client finishes
       // handshaking, and on a slow link that can exceed the window. Reaping a client that has never
       // spoken would break the connect it is still completing, so silence only counts against a
@@ -225,11 +236,7 @@ export abstract class RelayDispatcherClientLifecycle extends RelayDispatcherClie
       ) {
         continue
       }
-      this.closeClient(
-        client,
-        new Error('Relay client stopped answering'),
-        client !== this.primaryClient
-      )
+      this.closeClient(client, new Error('Relay client stopped answering'), true)
     }
   }
 

@@ -92,4 +92,40 @@ describe('RelayDispatcher silent-client reaper', () => {
 
     expect(detachListener).not.toHaveBeenCalledWith(clientId, expect.anything())
   })
+
+  it('does not reap a healthy client when the relay itself stalls for most of the window', () => {
+    // The dead band this exists for: a healthy client answers the PREVIOUS tick, so its
+    // lastReceivedAt is already ~KEEPALIVE_SEND_MS old. A tick gap short of TIMEOUT_MS still pushes
+    // staleness past the window, so a rebase armed at TIMEOUT_MS would never fire and every client
+    // would be reaped after a host suspend, VM migration, or an event-loop stall.
+    const detachListener = vi.fn()
+    dispatcher = new RelayDispatcher(() => true)
+    dispatcher.onClientDetached(detachListener)
+    const clientId = dispatcher.attachClient(() => true)
+
+    // The client answers at t=5s, then the next tick at t=10s finds it already ~5s stale — normal.
+    vi.advanceTimersByTime(KEEPALIVE_SEND_MS)
+    dispatcher.feedClient(clientId, encodeKeepAliveFrame(1, 0))
+    vi.advanceTimersByTime(KEEPALIVE_SEND_MS)
+
+    // Now the relay stalls: the clock jumps but no tick runs, so the following tick lands 17s after
+    // the last one. Staleness is 22s (past the window) while the tick gap is under TIMEOUT_MS, so a
+    // rebase armed at TIMEOUT_MS would not fire and this healthy client would be reaped.
+    vi.setSystemTime(Date.now() + 12_000)
+    vi.advanceTimersByTime(KEEPALIVE_SEND_MS)
+
+    expect(detachListener).not.toHaveBeenCalledWith(clientId, expect.anything())
+  })
+
+  it('never reaps the primary client, whose sink cannot be revived', () => {
+    const detachListener = vi.fn()
+    dispatcher = new RelayDispatcher(() => true)
+    dispatcher.onClientDetached(detachListener)
+
+    vi.advanceTimersByTime(TIMEOUT_MS * 20)
+
+    // Client id 1 is the primary sink; closing it would tear down the relay's own stdin/stdout and
+    // nothing in production calls setWrite() to bring it back.
+    expect(detachListener).not.toHaveBeenCalled()
+  })
 })
