@@ -2060,18 +2060,23 @@ export class PtyHandler {
     if (!managed || managed.disposed) {
       return
     }
-    // Why probe first (same probe attach() and listProcesses() run): a shell
-    // that exited without node-pty's `onExit` leaves this entry holding a closed
-    // master fd, and `UnixTerminal.resize` has no fd guard — the ioctl throws
-    // `ioctl(2) failed, EBADF` straight out of this notification handler into the
-    // dispatcher's generic parse-error catch, where it is logged and nothing
-    // else. Nothing retired the entry, so it kept being advertised as live and
-    // kept holding `activePtyCount` above zero, which is what stops a relay with
+    // Why probe (same probe attach() and listProcesses() run): a shell that
+    // exited without node-pty's `onExit` leaves an undisposed entry behind, and
+    // while it stays the relay keeps advertising a dead shell and keeps holding
+    // `activePtyCount` above zero, which is what stops a relay with
     // `relayGracePeriodSeconds: 0` from ever reaching its idle-no-ptys exit
-    // (#12423).
+    // (#12423). This is retirement, not ioctl safety: only ESRCH from the host
+    // that owns the pid is evidence of `exited`.
     if (this.reapPtyProvenExited(managed)) {
       return
     }
+    // The patched node-pty retires `_fd` in the same block that gives up the
+    // master (config/patches/node-pty@1.1.0.patch), which makes a resize past
+    // that point a no-op rather than a TIOCSWINSZ aimed at a reused descriptor.
+    // That covers only part of the window and does not cover this process at
+    // all: libuv closes the fd synchronously inside `uv_close`, before the JS
+    // `'close'` that runs `_close()`, and a relay host installs node-pty from
+    // npm, where the patch is not applied. So the catch below stays.
     try {
       managed.pty.resize(cols, rows)
     } catch (err) {

@@ -18,6 +18,10 @@ const STALE_DAEMON_CWD_MARKERS = [
 ]
 // Thrown by ipc/pty.ts when a persisted pane owner can't be proven alive or dead (STA-3536).
 const PANE_OWNER_UNVERIFIED_MARKER = 'terminal_pane_owner_unverified'
+// remote-runtime-pty-transport.ts surfaces this English literal as a wire-level marker, so it is
+// translated here rather than at the source -- otherwise the banner mixes English with the
+// localized chrome around it (#9194).
+const REMOTE_TERMINAL_CLOSED_MARKER = 'Remote terminal was closed.'
 // Why one source: the test and replace forms must match the same token, and a lone /g regex carries
 // lastIndex state across .test() calls. Capture the leading boundary so replacement can restore it.
 const TERMINAL_HOST_GONE_SOURCE = '(^|[^a-z0-9_])terminal_host_gone(?=$|[^a-z0-9_])'
@@ -99,6 +103,14 @@ export function humanizeTerminalError(error: string): string {
       translate(
         'auto.components.terminal.pane.TerminalErrorToast.7ee11bc0db',
         "Orca couldn't confirm whether this terminal's previous session is still running, so it left the session untouched. Reopen this pane to retry."
+      )
+    )
+  }
+  if (humanized.includes(REMOTE_TERMINAL_CLOSED_MARKER)) {
+    humanized = humanized.replaceAll(REMOTE_TERMINAL_CLOSED_MARKER, () =>
+      translate(
+        'auto.components.terminal.pane.TerminalErrorToast.remoteTerminalClosed',
+        'Remote terminal was closed.'
       )
     )
   }

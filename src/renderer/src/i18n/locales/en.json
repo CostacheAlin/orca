@@ -3072,7 +3072,8 @@
             "cc6d997c65": "Restart the terminal daemon from here to clear stale daemon state.",
             "7ee11bc0db": "Orca couldn't confirm whether this terminal's previous session is still running, so it left the session untouched. Reopen this pane to retry.",
             "e16012e31e": "The terminal daemon that owned this session exited, so the session and its scrollback could not be recovered. Open a new terminal to continue.",
-            "sessionUnavailable": "Orca couldn't reattach to this pane's terminal session on the host. Open a new terminal to continue."
+            "sessionUnavailable": "Orca couldn't reattach to this pane's terminal session on the host. Open a new terminal to continue.",
+            "remoteTerminalClosed": "Remote terminal was closed."
           },
           "TerminalProcessExitOverlay": {
             "capacityTitle": "Git Bash console limit reached",
@@ -15580,7 +15581,8 @@
           "rowActions": "Automation actions",
           "tableLastRun": "Last run",
           "noListMatches": "No automations match.",
-          "destinationProjectUnavailable": "Choose a project owned by the selected automation destination."
+          "destinationProjectUnavailable": "Choose a project owned by the selected automation destination.",
+          "ownerChanged": "This automation changed hosts. Refresh and try again."
         },
         "AutomationsPageSkeleton": {
           "55527b7bcf": "Loading automations"

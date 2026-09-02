@@ -36,7 +36,15 @@ import type { MockDispatcher } from './pty-handler-test-harness'
 const PTY_1 = testPtyId(1)
 const STALE_PID = 424_242
 
-/** node-pty's native `pty.resize` error when the master fd is already closed. */
+/**
+ * node-pty's native `pty.resize` error when the ioctl reaches a closed master.
+ *
+ * Orca's node-pty patch retires `_fd` when it gives up the master, so a patched
+ * handle answers a late resize with a no-op. That leaves this handler two cases
+ * it still has to contain: the tick between libuv closing the fd and node-pty's
+ * own handler observing it, and a relay host, which installs node-pty from npm
+ * and has no such guard.
+ */
 function ebadfResize(): never {
   throw new Error('ioctl(2) failed, EBADF')
 }
@@ -55,7 +63,7 @@ describe('PtyHandler.resize against a stale PTY handle', () => {
     }))
     resize = vi.fn()
     // A shell that exited without node-pty producing `onExit`: the record is
-    // still in the pool and undisposed, but the master fd behind it is closed.
+    // still in the pool and undisposed, but the master behind it is gone.
     mockPtySpawn.mockReturnValue({ ...mockPtyInstance, pid: STALE_PID, resize })
     await dispatcher.callRequest('pty.spawn', {})
     expect(handler.activePtyCount).toBe(1)
@@ -80,7 +88,7 @@ describe('PtyHandler.resize against a stale PTY handle', () => {
     expect(handler.activePtyCount).toBe(0)
   })
 
-  it('contains an ioctl failure whose process is still live, and keeps the record', () => {
+  it('contains an ioctl failure without re-classifying liveness, and keeps the record', () => {
     vi.spyOn(ptyShellUtils, 'isProcessAlive').mockReturnValue(true)
     resize.mockImplementation(ebadfResize)
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
@@ -94,11 +102,32 @@ describe('PtyHandler.resize against a stale PTY handle', () => {
       dispatcher.callNotification('pty.resize', { id: PTY_1, cols: 90, rows: 30 })
     ).not.toThrow()
 
-    // Loss of an fd is not evidence the shell exited, so the claim is retained.
+    // Loss of an fd observed the handle, not the host that owns the pid, so it is
+    // `unverifiable` and the claim is retained. Only the probe above retires.
     expect(handler.activePtyCount).toBe(1)
     expect(stderr.mock.calls.map(([line]) => String(line)).join('')).toContain(
       'ioctl(2) failed, EBADF'
     )
+  })
+
+  it('retires the entry when the pid goes absent between the pre-probe and the ioctl', () => {
+    // The race the catch-block re-probe exists for, and the one a constant
+    // liveness mock cannot express: alive when the pre-probe asks, gone by the
+    // time the ioctl fails. libuv closes the master synchronously inside
+    // `uv_close`, so this window opens before any JS guard can be set — and on
+    // a relay host, where node-pty comes from npm, there is no JS guard at all.
+    vi.spyOn(ptyShellUtils, 'isProcessAlive').mockReturnValueOnce(true).mockReturnValueOnce(false)
+    resize.mockImplementation(ebadfResize)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    expect(() =>
+      dispatcher.callNotification('pty.resize', { id: PTY_1, cols: 120, rows: 40 })
+    ).not.toThrow()
+
+    expect(resize).toHaveBeenCalledTimes(1)
+    expect(handler.activePtyCount).toBe(0)
+    // Proven `exited` retires silently; only live-or-unverifiable is reported.
+    expect(stderr).not.toHaveBeenCalled()
   })
 
   it('still resizes a live PTY, with the clamped geometry', () => {

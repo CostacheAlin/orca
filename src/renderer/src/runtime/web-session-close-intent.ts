@@ -4,7 +4,7 @@ import { webSessionIntentOwnerKey, type WebSessionIntentOwner } from './web-sess
 
 const CLOSE_INTENT_TTL_MS = 10_000
 
-type CloseIntent = { recordedAt: number }
+type CloseIntent = { recordedAt: number; durable: boolean }
 
 const pendingCloseByOwnerAndWorktree = new Map<string, Map<string, CloseIntent>>()
 
@@ -28,7 +28,27 @@ export function recordWebSessionCloseIntent(
     byTab = new Map()
     pendingCloseByOwnerAndWorktree.set(partitionKey, byTab)
   }
-  byTab.set(trimmed, { recordedAt: now })
+  byTab.set(trimmed, { recordedAt: now, durable: byTab.get(trimmed)?.durable === true })
+}
+
+/**
+ * Why no TTL: `tab_not_found` is the host's definitive answer that it does not have this tab, yet a
+ * host can keep republishing the surface in its snapshot (#9194). Letting that intent age out
+ * re-materializes a pane whose handle is already gone, and the pane the user just closed comes back
+ * showing "Remote terminal was closed." with no way to dismiss it. The intent still clears the
+ * moment the surface leaves a snapshot, so a host that recovers the tab is never suppressed forever.
+ */
+export function makeWebSessionCloseIntentDurable(
+  owner: WebSessionIntentOwner,
+  worktreeId: string,
+  hostTabId: string
+): void {
+  const intent = pendingCloseByOwnerAndWorktree
+    .get(closeIntentPartitionKey(owner, worktreeId))
+    ?.get(hostTabId)
+  if (intent) {
+    intent.durable = true
+  }
 }
 
 export function isWebSessionCloseIntentPending(
@@ -43,7 +63,7 @@ export function isWebSessionCloseIntentPending(
   if (!intent) {
     return false
   }
-  if (now - intent.recordedAt > CLOSE_INTENT_TTL_MS) {
+  if (!intent.durable && now - intent.recordedAt > CLOSE_INTENT_TTL_MS) {
     byTab!.delete(hostTabId)
     if (byTab!.size === 0) {
       pendingCloseByOwnerAndWorktree.delete(partitionKey)

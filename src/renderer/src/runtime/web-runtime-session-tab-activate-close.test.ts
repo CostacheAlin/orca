@@ -9,6 +9,7 @@ import {
   recordWebSessionCloseIntent,
   resetWebSessionCloseIntentForTests
 } from './web-session-close-intent'
+import { toHostSessionTabId } from './web-terminal-surface-id'
 import { ENVIRONMENT_ID, WORKTREE_ID, makeSnapshot } from './web-runtime-session-test-harness'
 
 const mocks = vi.hoisted(() => ({
@@ -303,6 +304,36 @@ describe('web runtime session tab actions', () => {
         reason: 'user'
       })
     ).resolves.toBe(outcome)
+  })
+
+  // #9194: a host can answer tab_not_found and still keep republishing the surface. The close
+  // intent is what hides the mirror, so letting it age out handed the user back a phantom pane
+  // whose handle is already gone -- and closing it again just restarted the same 10s loop.
+  it.each([
+    ['tab_not_found', true],
+    ['runtime_rpc_timeout', false]
+  ])('keeps a %s close suppressed past the close-intent TTL: %s', async (code, stillPending) => {
+    const runtimeCall = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'close', ok: false, error: { code, message: code } })
+      .mockResolvedValueOnce({ id: 'list', ok: true, result: makeSnapshot() })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await closeWebRuntimeSessionTab({
+      worktreeId: WORKTREE_ID,
+      tabId: 'local-browser-unified',
+      reason: 'user'
+    })
+
+    const hostTabId = toHostSessionTabId('local-browser-unified')
+    expect(
+      isWebSessionCloseIntentPending(
+        { environmentId: ENVIRONMENT_ID },
+        WORKTREE_ID,
+        hostTabId,
+        Date.now() + 60_000
+      )
+    ).toBe(stillPending)
   })
 
   it('fails closed when reconnect routes a lifecycle close to an older host', async () => {
