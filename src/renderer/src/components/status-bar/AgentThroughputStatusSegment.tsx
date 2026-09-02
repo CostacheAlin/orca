@@ -30,19 +30,19 @@ function placeholderHint(reason: AgentThroughputPlaceholderReason, agentType?: s
   if (reason === 'no-pane') {
     return translate(
       'auto.components.status.bar.AgentThroughputStatusSegment.noPane',
-      'Focus a terminal pane running an agent.'
+      'Focus a terminal running an agent.'
     )
   }
   if (reason === 'unmeasured-agent') {
     return translate(
       'auto.components.status.bar.AgentThroughputStatusSegment.unmeasuredAgent',
-      'Not available for {{agent}}: it records no token counts per message.',
+      'Not available for {{agent}}: no token counts recorded.',
       { agent: getAgentDisplayName(agentType ?? '') }
     )
   }
   return translate(
     'auto.components.status.bar.AgentThroughputStatusSegment.waiting',
-    'Waiting for the focused agent to complete a message.'
+    'No completed message in this terminal yet.'
   )
 }
 
@@ -92,7 +92,7 @@ export function AgentThroughputStatusSegment({
   const working = paneAgent?.state === 'working'
   const measuredFor = translate(
     'auto.components.status.bar.AgentThroughputStatusSegment.measuredFor',
-    'Measured per completed message for Claude Code, Codex, Gemini CLI and OpenCode; estimated for Grok.'
+    'Measured for Claude Code, Codex, Gemini CLI, OpenCode. Estimated for Grok.'
   )
   if (!sample) {
     // Why: an enabled item must always render, or "nothing" is indistinguishable from "off".
@@ -136,12 +136,12 @@ export function AgentThroughputStatusSegment({
             {turnAverage !== null
               ? translate(
                   'auto.components.status.bar.AgentThroughputStatusSegment.barTurnAverage',
-                  'In the bar: {{value}} tok/s, the average of this turn across {{count}} message(s)',
+                  'In the bar: {{value}} tok/s, this turn’s average over {{count}} message(s)',
                   { value: barValue, count: sample.turnMessageCount }
                 )
               : translate(
                   'auto.components.status.bar.AgentThroughputStatusSegment.barLastRequest',
-                  'In the bar: {{value}} tok/s, the last request (nothing completed in this turn yet)',
+                  'In the bar: {{value}} tok/s, last request (no message completed this turn yet)',
                   { value: barValue }
                 )}
           </div>
@@ -163,7 +163,7 @@ export function AgentThroughputStatusSegment({
             <div className="text-muted-foreground">
               {translate(
                 'auto.components.status.bar.AgentThroughputStatusSegment.estimated',
-                'Estimated from text length: this agent records no token counts, so hidden reasoning is approximated.'
+                'Estimated from text length; Grok records no token counts.'
               )}
             </div>
           ) : null}
