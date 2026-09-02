@@ -160,7 +160,13 @@ export class OrcaRuntimeWithRestoreStructuredAgentSessionTabsOnce extends OrcaRu
       throw new Error('terminal_gone')
     }
     if (this.ptyController.inspectProcess) {
-      const inspection = await this.ptyController.inspectProcess(leaf.ptyId, options)
+      // Preserve the legacy one-argument call shape when no incarnation
+      // fence was requested; some providers use arity to distinguish the
+      // compatibility path from the fenced remote inspection.
+      const inspection =
+        options === undefined
+          ? await this.ptyController.inspectProcess(leaf.ptyId)
+          : await this.ptyController.inspectProcess(leaf.ptyId, options)
       const evidence = inspection.foregroundProcessEvidence
       // The runtime handle is the request identity on this wire; keep the
       // host-owned leaf PTY id out of the client-facing comparison.
