@@ -46,21 +46,27 @@ function placeholderHint(reason: AgentThroughputPlaceholderReason, agentType?: s
   )
 }
 
+// Why: TooltipTrigger renders this as its child, so the ref and pointer handlers it injects must
+// land on the span or the tooltip never opens.
 function Readout({
   iconOnly,
   value,
-  emphasized
+  emphasized,
+  className,
+  ...triggerProps
 }: {
   iconOnly: boolean
   value: string
   emphasized: boolean
-}): React.JSX.Element {
+} & React.ComponentPropsWithRef<'span'>): React.JSX.Element {
   return (
     <span
+      {...triggerProps}
       className={cn(
         'inline-flex items-center gap-1 rounded px-1 py-0.5 tabular-nums',
         // Why: dim while idle so the last reading isn't mistaken for live generation.
-        emphasized ? 'text-foreground' : 'text-muted-foreground'
+        emphasized ? 'text-foreground' : 'text-muted-foreground',
+        className
       )}
       aria-label={translate(
         'auto.components.status.bar.AgentThroughputStatusSegment.ariaLabel',
@@ -109,13 +115,16 @@ export function AgentThroughputStatusSegment({
     )
   }
   // Why: a leading "~" keeps an estimate from reading as a measured figure at a glance.
-  const readout = readoutLabel(
-    `${sample.estimated ? '~' : ''}${formatTokensPerSecondValue(sample.tokensPerSecond)}`
-  )
   const turnAverage =
     sample.turnMessageCount > 0
       ? computeTokensPerSecond(sample.turnOutputTokens, sample.turnGenerationMs)
       : null
+  // Why: the bar shows the turn average — a single short message swings wildly — and keeps the
+  // previous reading across a turn boundary until the new turn's first message completes.
+  const prefix = sample.estimated ? '~' : ''
+  const barValue = `${prefix}${formatTokensPerSecondValue(turnAverage ?? sample.tokensPerSecond)}`
+  const lastValue = `${prefix}${formatTokensPerSecondValue(sample.tokensPerSecond)}`
+  const readout = readoutLabel(barValue)
   return (
     <Tooltip delayDuration={150}>
       <TooltipTrigger asChild>
@@ -124,27 +133,29 @@ export function AgentThroughputStatusSegment({
       <TooltipContent side="top" sideOffset={6}>
         <div className="space-y-0.5">
           <div>
+            {turnAverage !== null
+              ? translate(
+                  'auto.components.status.bar.AgentThroughputStatusSegment.barTurnAverage',
+                  'In the bar: {{value}} tok/s, the average of this turn across {{count}} message(s)',
+                  { value: barValue, count: sample.turnMessageCount }
+                )
+              : translate(
+                  'auto.components.status.bar.AgentThroughputStatusSegment.barLastRequest',
+                  'In the bar: {{value}} tok/s, the last request (nothing completed in this turn yet)',
+                  { value: barValue }
+                )}
+          </div>
+          <div>
             {translate(
-              'auto.components.status.bar.AgentThroughputStatusSegment.lastMessage',
-              'Last message: {{tokens}} tokens in {{duration}}',
+              'auto.components.status.bar.AgentThroughputStatusSegment.lastRequest',
+              'Last request: {{value}} tok/s ({{tokens}} tokens in {{duration}})',
               {
+                value: lastValue,
                 tokens: formatTokens(sample.outputTokens),
                 duration: formatGenerationDuration(sample.generationMs)
               }
             )}
           </div>
-          {turnAverage !== null ? (
-            <div>
-              {translate(
-                'auto.components.status.bar.AgentThroughputStatusSegment.turnAverage',
-                'This turn: {{value}} tok/s across {{count}} message(s)',
-                {
-                  value: formatTokensPerSecondValue(turnAverage),
-                  count: sample.turnMessageCount
-                }
-              )}
-            </div>
-          ) : null}
           <div className="text-muted-foreground">
             {[getAgentDisplayName(sample.agentType), sample.model].filter(Boolean).join(' · ')}
           </div>

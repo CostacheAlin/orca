@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { ElectronApplication, Page } from '@stablyai/playwright-test'
+import type { ElectronApplication, Locator, Page } from '@stablyai/playwright-test'
 import { grokEncodedCwdDirName } from '../../src/shared/grok-session-paths'
 import { expect, test } from './helpers/orca-app'
 import { readHookEndpoint } from './helpers/agent-hook-endpoint'
@@ -97,11 +97,59 @@ async function postHook(
   expect(response.status).toBe(204)
 }
 
-async function prepareFocusedPane(orcaPage: Page): Promise<ActivePaneHookDescriptor> {
+// Why: optional PR evidence. The status bar is a 24 px strip, so a bottom crop reads better than a full window.
+async function captureEvidence(
+  page: Page,
+  name: string,
+  options: { full?: boolean; stripHeight?: number } = {}
+): Promise<void> {
+  const dir = process.env.ORCA_THROUGHPUT_EVIDENCE_DIR
+  if (!dir) {
+    return
+  }
+  mkdirSync(dir, { recursive: true })
+  if (options.full) {
+    await page.screenshot({ path: path.join(dir, `${name}.png`) })
+  }
+  // Why: Electron pages report no Playwright viewport; the window's own size is the real one.
+  const viewport = await page.evaluate(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight
+  }))
+  // Why: the readout sits in the right-hand cluster; a full-width strip makes it unreadable.
+  const height = options.stripHeight ?? 40
+  const width = Math.min(viewport.width, 720)
+  await page.screenshot({
+    path: path.join(dir, `${name}-status-bar.png`),
+    clip: { x: viewport.width - width, y: viewport.height - height, width, height }
+  })
+}
+
+// Why: the tooltip is the only place the message size, duration and agent show, so hover must
+// open it; the star nag can cover that corner, so dismiss it first.
+async function expectTooltip(page: Page, trigger: Locator, expectedText: string): Promise<void> {
+  const later = page.getByRole('button', { name: 'Later' })
+  if (await later.isVisible().catch(() => false)) {
+    await later.click()
+  }
+  await trigger.hover()
+  // Why: Radix renders the content twice (visible popper + visually hidden a11y copy); the popper comes first.
+  await expect(page.getByText(expectedText).first()).toBeVisible()
+  await captureEvidence(page, 'after-tooltip', { stripHeight: 160 })
+  await page.mouse.move(0, 0)
+}
+
+async function prepareFocusedPane(
+  orcaPage: Page,
+  options: { captureBefore?: boolean } = {}
+): Promise<ActivePaneHookDescriptor> {
   await waitForSessionReady(orcaPage)
   await waitForActiveWorktree(orcaPage)
   await ensureTerminalVisible(orcaPage)
   const descriptor = await waitForActivePaneHookDescriptor(orcaPage)
+  if (options.captureBefore) {
+    await captureEvidence(orcaPage, 'before', { full: true })
+  }
   // Why: the readout is opt-in; the store enables it (setup) and the DOM proves it (assertion).
   await orcaPage.evaluate(() => {
     const store = window.__store
@@ -123,9 +171,10 @@ test('shows tokens per second for the focused pane once a Claude message complet
   electronApp,
   orcaPage
 }) => {
-  const descriptor = await prepareFocusedPane(orcaPage)
+  const descriptor = await prepareFocusedPane(orcaPage, { captureBefore: true })
   // Why: an enabled item must be visible before any message completes, not silently absent.
   await expect(orcaPage.getByLabel('Agent throughput, n/a tok/s')).toHaveText('n/a tok/s')
+  await captureEvidence(orcaPage, 'after-placeholder')
   const transcriptDir = createTranscriptDir()
   const transcriptPath = path.join(transcriptDir, 'session.jsonl')
   const lines = [
@@ -162,10 +211,8 @@ test('shows tokens per second for the focused pane once a Claude message complet
   const firstReadout = orcaPage.getByLabel('Agent throughput, 68 tok/s')
   await expect(firstReadout).toBeVisible()
   await expect(firstReadout).toHaveText('68 tok/s')
-  const proofPath = process.env.ORCA_THROUGHPUT_PROOF_PATH
-  if (proofPath) {
-    await orcaPage.screenshot({ path: proofPath })
-  }
+  await captureEvidence(orcaPage, 'after', { full: true })
+  await expectTooltip(orcaPage, firstReadout, 'Last request: 68 tok/s (2.5k tokens in 36.5s)')
 
   lines.push(
     claudeRow(
