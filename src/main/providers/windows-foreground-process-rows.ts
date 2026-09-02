@@ -1,3 +1,4 @@
+import { collectProcessTreeDescendants } from '../../shared/process-table-snapshot'
 import {
   readWindowsProcessTable,
   readWindowsProcessTableFresh,
@@ -25,6 +26,51 @@ function toProcessRow(row: NativeWindowsProcessRow): WindowsProcessRow {
   }
 }
 
+type WindowsProcessTableIndex = {
+  rows: readonly WindowsProcessRow[]
+  byPid: ReadonlyMap<number, WindowsProcessRow>
+  childrenByPpid: ReadonlyMap<number, readonly WindowsProcessRow[]>
+}
+
+const windowsProcessTableIndexes = new WeakMap<
+  readonly NativeWindowsProcessRow[],
+  WindowsProcessTableIndex
+>()
+
+/**
+ * Project and index one native capture once, keyed weakly by the capture so the
+ * index dies with it. Every agent pane inspects on its own cadence but shares
+ * the TTL-cached table underneath, and each used to re-allocate the whole
+ * projection plus a parent map before finding its own root.
+ *
+ * Rows are shared, so treat them as read-only.
+ */
+function indexWindowsProcessTable(
+  native: readonly NativeWindowsProcessRow[]
+): WindowsProcessTableIndex {
+  const cached = windowsProcessTableIndexes.get(native)
+  if (cached) {
+    return cached
+  }
+  const rows: WindowsProcessRow[] = []
+  const byPid = new Map<number, WindowsProcessRow>()
+  const childrenByPpid = new Map<number, WindowsProcessRow[]>()
+  for (const nativeRow of native) {
+    const row = toProcessRow(nativeRow)
+    rows.push(row)
+    // Preserve rows.find() semantics if a malformed table repeats a pid.
+    if (!byPid.has(row.pid)) {
+      byPid.set(row.pid, row)
+    }
+    const children = childrenByPpid.get(row.ppid) ?? []
+    children.push(row)
+    childrenByPpid.set(row.ppid, children)
+  }
+  const index: WindowsProcessTableIndex = { rows, byPid, childrenByPpid }
+  windowsProcessTableIndexes.set(native, index)
+  return index
+}
+
 /**
  * Rows from a scan that starts after this call.
  *
@@ -32,8 +78,8 @@ function toProcessRow(row: NativeWindowsProcessRow): WindowsProcessRow {
  * the very recycle it is meant to detect. Rejects when the table is unreadable,
  * so "unavailable" stays distinguishable from "nothing is running".
  */
-export async function queryWindowsProcessRowsFresh(): Promise<WindowsProcessRow[]> {
-  return (await readWindowsProcessTableFresh()).map(toProcessRow)
+export async function queryWindowsProcessRowsFresh(): Promise<readonly WindowsProcessRow[]> {
+  return indexWindowsProcessTable(await readWindowsProcessTableFresh()).rows
 }
 
 export async function queryWindowsProcessDescendants(
@@ -57,54 +103,28 @@ export async function queryWindowsPaneProcessInventory(
   rootPid: number,
   options: { fresh?: boolean; anchorPid?: number } = {}
 ): Promise<WindowsPaneProcessInventory | null> {
-  let rows: WindowsProcessRow[]
+  let index: WindowsProcessTableIndex
   try {
-    const native =
+    index = indexWindowsProcessTable(
       options.fresh === true
         ? await readWindowsProcessTableFresh()
         : await readWindowsProcessTable()
-    rows = native.map(toProcessRow)
+    )
   } catch {
     return null
   }
   // Why: a snapshot that omitted the PTY root may be stale or permission-
   // filtered; only an observed root can authoritatively have no descendants.
-  if (!rows.some((row) => row.pid === rootPid)) {
+  if (!index.byPid.has(rootPid)) {
     return null
   }
   return {
-    candidates: collectDescendants(rows, rootPid).sort((a, b) => b.depth - a.depth),
-    anchorRow:
-      options.anchorPid !== undefined
-        ? (rows.find((row) => row.pid === options.anchorPid) ?? null)
-        : null
+    candidates: collectProcessTreeDescendants(index, rootPid).sort((a, b) => b.depth - a.depth),
+    anchorRow: options.anchorPid !== undefined ? (index.byPid.get(options.anchorPid) ?? null) : null
   }
 }
 
 /** Test-only: clear the shared snapshot so one case's rows never serve the next. */
 export function resetWindowsProcessRowsSnapshotForTests(): void {
   resetWindowsProcessTableForTests()
-}
-
-function collectDescendants<Row extends { pid: number; ppid: number }>(
-  rows: Row[],
-  rootPid: number
-): (Row & { depth: number })[] {
-  const childrenByParent = new Map<number, Row[]>()
-  for (const row of rows) {
-    const children = childrenByParent.get(row.ppid) ?? []
-    children.push(row)
-    childrenByParent.set(row.ppid, children)
-  }
-
-  const descendants: (Row & { depth: number })[] = []
-  const stack = (childrenByParent.get(rootPid) ?? []).map((row) => ({ row, depth: 1 }))
-  while (stack.length > 0) {
-    const { row, depth } = stack.pop()!
-    descendants.push({ ...row, depth })
-    for (const child of childrenByParent.get(row.pid) ?? []) {
-      stack.push({ row: child, depth: depth + 1 })
-    }
-  }
-  return descendants
 }

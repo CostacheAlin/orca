@@ -14,6 +14,7 @@ const getAllProcessesMock = vi.fn()
 
 import { __setWindowsProcessTreeLoaderForTests } from '../windows/windows-process-table'
 import {
+  queryWindowsPaneProcessInventory,
   queryWindowsProcessDescendants,
   queryWindowsProcessRowsFresh,
   resetWindowsProcessRowsSnapshotForTests
@@ -107,6 +108,38 @@ describe('windows process rows', () => {
 
     expect(scanCount()).toBe(1)
     expect(rows[31]?.map((row) => row.pid)).toEqual([process.pid, 100, 200])
+  })
+
+  it('projects and indexes a capture once, however many panes inspect it', async () => {
+    // Every agent pane inspects on its own cadence but shares the TTL-cached
+    // table underneath. Identical row objects prove the projection ran once;
+    // before, each pane re-allocated the whole table plus its own parent map.
+    resetWindowsProcessRowsSnapshotForTests()
+
+    const first = await queryWindowsPaneProcessInventory(100, { anchorPid: 200 })
+    const second = await queryWindowsPaneProcessInventory(100, { anchorPid: 200 })
+
+    expect(scanCount()).toBe(1)
+    expect(second?.anchorRow).toBe(first?.anchorRow)
+    expect(first?.anchorRow).toEqual({
+      pid: 200,
+      ppid: 100,
+      name: 'node.exe',
+      command: NATIVE_ROWS[1]!.commandLine
+    })
+    expect(second?.candidates).toEqual(first?.candidates)
+    expect(second?.candidates).toEqual([
+      { pid: 200, ppid: 100, name: 'node.exe', command: NATIVE_ROWS[1]!.commandLine, depth: 1 }
+    ])
+  })
+
+  it('re-projects a fresh capture instead of serving the memoized one', async () => {
+    const cached = await queryWindowsPaneProcessInventory(100, { anchorPid: 200 })
+    resetWindowsProcessRowsSnapshotForTests()
+    const refreshed = await queryWindowsPaneProcessInventory(100, { anchorPid: 200 })
+
+    expect(refreshed?.anchorRow).not.toBe(cached?.anchorRow)
+    expect(refreshed?.anchorRow).toEqual(cached?.anchorRow)
   })
 
   it('never answers from the TTL cache, which can predate the recycle it detects', async () => {

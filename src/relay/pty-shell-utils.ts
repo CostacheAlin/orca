@@ -11,10 +11,10 @@ import {
 } from '../shared/agent-process-recognition'
 import { getFirstCommandToken } from '../shared/command-token-scanner'
 import {
+  collectProcessTreeDescendants,
   getProcessTableIndex,
   getProcessTableSnapshot,
   scoreForegroundCandidateRow,
-  type ProcessTableIndex,
   type ProcessTableRow
 } from '../shared/process-table-snapshot'
 import {
@@ -199,22 +199,6 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-function collectDescendants(
-  index: ProcessTableIndex,
-  rootPid: number
-): (ProcessTableRow & { depth: number })[] {
-  const descendants: (ProcessTableRow & { depth: number })[] = []
-  const stack = (index.childrenByPpid.get(rootPid) ?? []).map((row) => ({ row, depth: 1 }))
-  while (stack.length > 0) {
-    const { row, depth } = stack.pop()!
-    descendants.push({ ...row, depth })
-    for (const child of index.childrenByPpid.get(row.pid) ?? []) {
-      stack.push({ row: child, depth: depth + 1 })
-    }
-  }
-  return descendants
-}
-
 async function getRecognizedForegroundDescendant(
   pid: number,
   fallbackProcess?: string | null
@@ -240,7 +224,7 @@ function getForegroundProcessNameFromProcessTable(
   // snapshot no longer each rebuild the parent/child map over every row.
   const index = getProcessTableIndex(rows)
   const root = index.byPid.get(pid)
-  const candidates = collectDescendants(index, pid).sort(
+  const candidates = collectProcessTreeDescendants(index, pid).sort(
     (a, b) => scoreForegroundCandidateRow(b) - scoreForegroundCandidateRow(a)
   )
   // Why: SSH relays do not have the daemon's async wrapper cache. Inspect the

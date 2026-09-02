@@ -169,6 +169,32 @@ export function scoreForegroundCandidateRow(row: ProcessTableRow & { depth: numb
   return (row.stat.includes('+') ? 10_000 : 0) + row.depth
 }
 
+/** The parent/child projection a descendant walk needs, and nothing else. */
+export type ProcessTreeChildIndex<Row> = {
+  childrenByPpid: ReadonlyMap<number, readonly Row[]>
+}
+
+/**
+ * Depth-first walk of a root's descendants off a prebuilt index, children in
+ * table order. Same rows, same order as building a parent map per call — but
+ * the map is built once per capture instead of once per pane per inspection.
+ */
+export function collectProcessTreeDescendants<Row extends { pid: number }>(
+  index: ProcessTreeChildIndex<Row>,
+  rootPid: number
+): (Row & { depth: number })[] {
+  const descendants: (Row & { depth: number })[] = []
+  const stack = (index.childrenByPpid.get(rootPid) ?? []).map((row) => ({ row, depth: 1 }))
+  while (stack.length > 0) {
+    const { row, depth } = stack.pop()!
+    descendants.push({ ...row, depth })
+    for (const child of index.childrenByPpid.get(row.pid) ?? []) {
+      stack.push({ row: child, depth: depth + 1 })
+    }
+  }
+  return descendants
+}
+
 export function lookupProcessTableIndex<T>(
   index: ProcessTableIndex,
   lookup: (index: ProcessTableIndex) => T,
