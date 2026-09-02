@@ -1,8 +1,11 @@
 import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
 import { resolveOuterWrapperForegroundProcess } from '../../shared/foreground-wrapper-agent'
 import {
+  collectDescendantsFromIndex,
   getFreshProcessTableSnapshot,
+  getProcessTableIndex,
   getProcessTableSnapshot,
+  type ProcessTableIndex,
   type ProcessTableRow
 } from '../../shared/process-table-snapshot'
 import {
@@ -42,29 +45,6 @@ type ShellForegroundConfirmationOptions = {
     | Promise<ReadonlySet<number> | null>
 }
 
-function collectDescendants<Row extends { pid: number; ppid: number }>(
-  rows: Row[],
-  rootPid: number
-): (Row & { depth: number })[] {
-  const childrenByParent = new Map<number, Row[]>()
-  for (const row of rows) {
-    const children = childrenByParent.get(row.ppid) ?? []
-    children.push(row)
-    childrenByParent.set(row.ppid, children)
-  }
-
-  const descendants: (Row & { depth: number })[] = []
-  const stack = (childrenByParent.get(rootPid) ?? []).map((row) => ({ row, depth: 1 }))
-  while (stack.length > 0) {
-    const { row, depth } = stack.pop()!
-    descendants.push({ ...row, depth })
-    for (const child of childrenByParent.get(row.pid) ?? []) {
-      stack.push({ row: child, depth: depth + 1 })
-    }
-  }
-  return descendants
-}
-
 function commandExecutable(command: string): string {
   const trimmed = command.trim().replace(/^[-]/, '')
   if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
@@ -96,12 +76,12 @@ export async function confirmShellForegroundProcess(
     }
   }
   try {
-    const rows = await getFreshProcessTableSnapshot()
-    if (!rows.some((row) => row.pid === shellPid)) {
+    const index = getProcessTableIndex(await getFreshProcessTableSnapshot())
+    const root = index.byPid.get(shellPid)
+    if (!root) {
       return false
     }
-    const root = rows.find((row) => row.pid === shellPid)!
-    const tree = [{ ...root, depth: 0 }, ...collectDescendants(rows, shellPid)]
+    const tree = [{ ...root, depth: 0 }, ...collectDescendantsFromIndex(index, shellPid)]
     const spawnedShellBasename = executableBasename(spawnedShellProcess)
     const foregroundShell = tree
       .filter(
@@ -175,15 +155,15 @@ export async function resolveAgentForegroundProcessWithAvailability(
   }
 
   try {
-    const rows = options.fresh
-      ? await getFreshProcessTableSnapshot()
-      : await getProcessTableSnapshot()
-    if (options.fresh && !rows.some((row) => row.pid === shellPid)) {
+    const index = getProcessTableIndex(
+      options.fresh ? await getFreshProcessTableSnapshot() : await getProcessTableSnapshot()
+    )
+    if (options.fresh && !index.byPid.has(shellPid)) {
       return { available: false, processName: fallbackProcess }
     }
     return {
       available: true,
-      processName: resolveAgentForegroundProcessFromPs(rows, shellPid) ?? fallbackProcess
+      processName: resolveAgentForegroundProcessFromPs(index, shellPid) ?? fallbackProcess
     }
   } catch {
     // Why: a failed scan cannot prove fallback ownership; callers retain the last recognized agent.
@@ -192,11 +172,11 @@ export async function resolveAgentForegroundProcessWithAvailability(
 }
 
 function resolveAgentForegroundProcessFromPs(
-  rows: ProcessTableRow[],
+  index: ProcessTableIndex,
   shellPid: number
 ): string | null {
-  const shellRow = rows.find((row) => row.pid === shellPid)
-  const candidates = collectDescendants(rows, shellPid).sort(
+  const shellRow = index.byPid.get(shellPid)
+  const candidates = collectDescendantsFromIndex(index, shellPid).sort(
     (a, b) => candidateScore(b) - candidateScore(a)
   )
   // Why: `+` in `ps stat` marks the process holding the terminal foreground.
