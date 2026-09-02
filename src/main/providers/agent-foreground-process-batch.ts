@@ -150,8 +150,8 @@ function collectDescendantRows(index: ProcessTableIndex, rootPid: number): Proce
   const result: ProcessTableRow[] = []
   const seen = new Set<number>([rootPid])
   const queue = [rootPid]
-  while (queue.length) {
-    const pid = queue.shift()!
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const pid = queue[cursor]
     for (const child of index.childrenByPpid.get(pid) ?? []) {
       if (seen.has(child.pid)) {
         continue
