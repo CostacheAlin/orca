@@ -4,7 +4,6 @@ import type {
 } from '../../shared/agent-session-resume'
 import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
 import type { ProjectExecutionRuntimeResolution } from '../../shared/project-execution-runtime'
-import type { PtyLivenessVerdict } from '../../shared/pty-liveness-verdict'
 import type { PtyListedSession } from '../../shared/pty-listed-session'
 import type { PtyMainDeliveryDiagnostics } from '../../shared/pty-delivery-diagnostics'
 import type { PtyModelRestoreNeededEvent } from '../../shared/pty-model-restore-marker'
@@ -205,8 +204,8 @@ export type PtyApi = {
       preserveRendererBinding?: boolean
       /** Which lifetime of `id` died; absent when the execution host predates the field. */
       incarnationId?: string
-      /** Set only when the owning host attested the verdict; absent means it did not say. */
-      livenessVerdict?: PtyLivenessVerdict['status']
+      /** Set only when the owning relay disowned this id; never a claim that the process died. */
+      ptySourceDisowned?: true
     }) => void
   ) => () => void
   onSpawned: (callback: (data: { id: string }) => void) => () => void

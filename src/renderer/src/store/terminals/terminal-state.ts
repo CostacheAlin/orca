@@ -119,13 +119,14 @@ export type TerminalState = {
    */
   unverifiedPtyLossTabIds: Record<string, true>
   /**
-   * PTY ids a reachable relay answered absent for.
+   * PTY ids a reachable relay disowned — no relay will hand them back.
    *
-   * Session-scoped and host-attested: the counterpart to the marker above, and the only absence
-   * evidence strong enough to let a reconnect retire a binding and respawn the pane. Settled when
-   * the id is bound again (see terminal-host-attested-pty-absence.ts).
+   * Session-scoped: the counterpart to the marker above, and the only signal strong enough to let a
+   * reconnect retire a binding and respawn the pane. Short of `exited`, because a restarted relay
+   * disowns ids it never minted. Settled when the id is bound again
+   * (see terminal-disowned-pty-sources.ts).
    */
-  hostAttestedAbsentPtyIds: Record<string, true>
+  disownedPtyIds: Record<string, true>
   /** Reattach snapshots are consumed once by the pane that receives the replacement PTY. */
   pendingSnapshotByPtyId: Record<
     string,

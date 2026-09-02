@@ -187,11 +187,11 @@ describe('SshRelaySession abandoned remote PTYs', () => {
     expect(clearProviderPtyState).not.toHaveBeenCalledWith(APP_PTY_ID)
   })
 
-  it('publishes a host-attested exit verdict when the relay answers not-found', async () => {
-    // A reachable relay answered for this exact id and reported it absent. That is positive
-    // evidence of absence from the host that owns the process, so the verdict is `exited` — the
-    // same reading ssh-pty-relay-absence-verdict.test.ts pins for the spawn path, and the one case
-    // where replacing the pane is right (docs/reference/ssh-execution-boundary.md).
+  it('publishes a disowned-source signal when the relay answers not-found', async () => {
+    // A reachable relay answered for this exact id and disowned it. That licenses replacing the
+    // pane — respawning leaks the old process rather than killing it — but a restarted relay
+    // answers the same way for ids it never minted, so this is not an `exited` verdict
+    // (docs/reference/ssh-execution-boundary.md).
     const { deps, shutdown } = await establishWithFailingReattach(
       new Error('PTY "pty-live" not found')
     )
@@ -207,7 +207,7 @@ describe('SshRelaySession abandoned remote PTYs', () => {
     expect(deps.mockWindow.webContents.send).toHaveBeenCalledWith('pty:exit', {
       id: APP_PTY_ID,
       code: -1,
-      livenessVerdict: 'exited'
+      ptySourceDisowned: true
     })
     const exitCall = vi
       .mocked(deps.mockWindow.webContents.send)

@@ -98,7 +98,7 @@ describe('shouldRetryPaneSpawnOnSshReconnect', () => {
         tabPtyId: null,
         tabPtyIds: ['ssh:conn-1@@pty2:dead-epoch:1'],
         leafPtyIds: ['ssh:conn-1@@pty2:dead-epoch:1'],
-        hostAttestedAbsentPtyIds: { 'ssh:conn-1@@pty2:dead-epoch:1': true },
+        disownedPtyIds: { 'ssh:conn-1@@pty2:dead-epoch:1': true },
         deferredSessionId: undefined
       })
     ).toBe(true)
@@ -113,7 +113,7 @@ describe('shouldRetryPaneSpawnOnSshReconnect', () => {
         tabPtyId: null,
         tabPtyIds: ['ssh:conn-1@@pty2:dead-epoch:1'],
         leafPtyIds: ['ssh:conn-1@@pty2:dead-epoch:1'],
-        hostAttestedAbsentPtyIds: {},
+        disownedPtyIds: {},
         deferredSessionId: undefined
       })
     ).toBe(false)
@@ -128,7 +128,7 @@ describe('shouldRetryPaneSpawnOnSshReconnect', () => {
         tabPtyId: null,
         tabPtyIds: ['ssh:conn-1@@pty-4', 'ssh:conn-1@@pty-5'],
         leafPtyIds: ['ssh:conn-1@@pty-4', 'ssh:conn-1@@pty-5'],
-        hostAttestedAbsentPtyIds: { 'ssh:conn-1@@pty-4': true },
+        disownedPtyIds: { 'ssh:conn-1@@pty-4': true },
         deferredSessionId: undefined
       })
     ).toBe(false)
@@ -141,7 +141,7 @@ describe('shouldRetryPaneSpawnOnSshReconnect', () => {
         tabPtyId: null,
         tabPtyIds: undefined,
         leafPtyIds: ['ssh:conn-1@@pty-9'],
-        hostAttestedAbsentPtyIds: { 'ssh:conn-1@@pty-8': true },
+        disownedPtyIds: { 'ssh:conn-1@@pty-8': true },
         deferredSessionId: undefined
       })
     ).toBe(false)

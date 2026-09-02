@@ -698,7 +698,7 @@ describe('SshRelaySession', () => {
     expect(mockWindow.webContents.send).toHaveBeenCalledWith('pty:exit', {
       id: 'ssh:target-1@@pty-stale',
       code: -1,
-      livenessVerdict: 'exited'
+      ptySourceDisowned: true
     })
   })
 

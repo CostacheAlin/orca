@@ -87,8 +87,8 @@ describe('direct SSH terminal retry ledger', () => {
 
     it('respawns once the relay answers that the id is absent', () => {
       const store = seedHydratedLeafBinding()
-      store.getState().markHostAttestedPtyAbsence(DEAD_PTY_ID)
-      expect(store.getState().hostAttestedAbsentPtyIds[DEAD_PTY_ID]).toBe(true)
+      store.getState().markPtySourceDisowned(DEAD_PTY_ID)
+      expect(store.getState().disownedPtyIds[DEAD_PTY_ID]).toBe(true)
       expect(store.getState().retryDirectSshTargetPanes(authority())).toBe(1)
       expect(store.getState().tabsByWorktree[WORKTREE_ID]?.[0]?.generation ?? 0).toBe(1)
     })
@@ -97,9 +97,9 @@ describe('direct SSH terminal retry ledger', () => {
       // A redeployed relay renumbers from pty-1, so a record that outlived its id would let a later
       // reconnect respawn over a live shell.
       const store = seedHydratedLeafBinding()
-      store.getState().markHostAttestedPtyAbsence(DEAD_PTY_ID)
+      store.getState().markPtySourceDisowned(DEAD_PTY_ID)
       store.getState().updateTabPtyId(TAB_ID, DEAD_PTY_ID)
-      expect(store.getState().hostAttestedAbsentPtyIds[DEAD_PTY_ID]).toBeUndefined()
+      expect(store.getState().disownedPtyIds[DEAD_PTY_ID]).toBeUndefined()
       expect(store.getState().retryDirectSshTargetPanes(authority())).toBe(0)
     })
   })

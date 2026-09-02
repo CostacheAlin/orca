@@ -40,7 +40,7 @@ export function retryDirectSshTerminalPanes(
   state: DirectSshTerminalBindingState & {
     deferredSshSessionIdsByTabId: Record<string, string>
     terminalLayoutsByTabId?: Record<string, TerminalLayoutSnapshot>
-    hostAttestedAbsentPtyIds?: Record<string, true>
+    disownedPtyIds?: Record<string, true>
   },
   terminalWorkspaceKeys: ReadonlySet<string>,
   authority: DirectSshAuthority,
@@ -85,7 +85,7 @@ export function retryDirectSshTerminalPanes(
           tabPtyId: tab.ptyId,
           tabPtyIds: working.ptyIdsByTabId?.[tab.id],
           leafPtyIds: Object.values(working.terminalLayoutsByTabId?.[tab.id]?.ptyIdsByLeafId ?? {}),
-          hostAttestedAbsentPtyIds: working.hostAttestedAbsentPtyIds,
+          disownedPtyIds: working.disownedPtyIds,
           deferredSessionId: state.deferredSshSessionIdsByTabId[tab.id]
         })
       ) {
@@ -159,7 +159,7 @@ export function retryDirectSshTerminalPanes(
 export function retrySettledDirectSshTerminalPane(
   state: DirectSshTerminalBindingState & {
     deferredSshSessionIdsByTabId: Record<string, string>
-    hostAttestedAbsentPtyIds?: Record<string, true>
+    disownedPtyIds?: Record<string, true>
   },
   terminalWorkspaceKeys: ReadonlySet<string>,
   authority: DirectSshAuthority,
