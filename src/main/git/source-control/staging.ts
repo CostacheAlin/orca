@@ -68,16 +68,14 @@ export async function bulkStageFiles(
     return
   }
   try {
-    await runWithGitWorktreeOperationLock(worktreePath, options.signal, () =>
-      (async () => {
-        for (const args of bulkPathspecCommands(['add', '--'], filePaths, worktreePath, options)) {
-          await runWithGitIndexLockRetry(
-            () => gitExecFileAsync(args, gitOptionsForWorktree(worktreePath, options)),
-            options.signal
-          )
-        }
-      })()
-    )
+    await runWithGitWorktreeOperationLock(worktreePath, options.signal, async () => {
+      for (const args of bulkPathspecCommands(['add', '--'], filePaths, worktreePath, options)) {
+        await runWithGitIndexLockRetry(
+          () => gitExecFileAsync(args, gitOptionsForWorktree(worktreePath, options)),
+          options.signal
+        )
+      }
+    })
   } finally {
     invalidateGitReadCaches()
   }
@@ -96,22 +94,20 @@ export async function bulkUnstageFiles(
     return
   }
   try {
-    await runWithGitWorktreeOperationLock(worktreePath, options.signal, () =>
-      (async () => {
-        const commands = bulkPathspecCommands(
-          ['restore', '--staged', '--'],
-          filePaths,
-          worktreePath,
-          options
+    await runWithGitWorktreeOperationLock(worktreePath, options.signal, async () => {
+      const commands = bulkPathspecCommands(
+        ['restore', '--staged', '--'],
+        filePaths,
+        worktreePath,
+        options
+      )
+      for (const args of commands) {
+        await runWithGitIndexLockRetry(
+          () => gitExecFileAsync(args, gitOptionsForWorktree(worktreePath, options)),
+          options.signal
         )
-        for (const args of commands) {
-          await runWithGitIndexLockRetry(
-            () => gitExecFileAsync(args, { ...gitOptionsForWorktree(worktreePath, options) }),
-            options.signal
-          )
-        }
-      })()
-    )
+      }
+    })
   } finally {
     invalidateGitReadCaches()
   }

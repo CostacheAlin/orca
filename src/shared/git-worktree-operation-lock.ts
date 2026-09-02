@@ -9,10 +9,14 @@ export async function runWithGitWorktreeOperationLock<T>(
   run: () => Promise<T>
 ): Promise<T> {
   const fallbackKey = resolve(worktreePath)
-  // Async so a hung filesystem cannot freeze the main-process event loop.
-  const key = await Promise.resolve()
-    .then(() => realpath(worktreePath))
-    .then((canonicalPath) => canonicalPath ?? fallbackKey)
-    .catch(() => fallbackKey)
+  let key = fallbackKey
+  try {
+    const canonicalPath = await realpath(worktreePath)
+    if (canonicalPath) {
+      key = canonicalPath
+    }
+  } catch {
+    // A missing or temporarily unreachable worktree still gets serialized.
+  }
   return runWithGitOperationLock(key, signal, run)
 }
