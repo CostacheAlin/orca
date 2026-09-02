@@ -1,7 +1,8 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { ElectronApplication, Page } from '@stablyai/playwright-test'
+import { grokEncodedCwdDirName } from '../../src/shared/grok-session-paths'
 import { expect, test } from './helpers/orca-app'
 import { readHookEndpoint } from './helpers/agent-hook-endpoint'
 import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } from './helpers/store'
@@ -70,9 +71,10 @@ function codexTokenCount(offsetMs: number, outputTokens: number, totalOutput: nu
 
 async function postHook(
   app: ElectronApplication,
-  source: 'claude' | 'codex',
+  source: 'claude' | 'codex' | 'grok',
   descriptor: ActivePaneHookDescriptor,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  envelope: Record<string, unknown> = {}
 ): Promise<void> {
   const endpoint = await readHookEndpoint(app)
   const [tabId] = descriptor.paneKey.split(':')
@@ -88,6 +90,7 @@ async function postHook(
       worktreeId: descriptor.worktreeId,
       env: endpoint.env,
       version: endpoint.version,
+      ...envelope,
       payload
     })
   })
@@ -248,4 +251,49 @@ test('shows tokens per second for a Codex pane from its rollout', async ({
   const readout = orcaPage.getByLabel('Agent throughput, 24 tok/s')
   await expect(readout).toBeVisible()
   await expect(readout).toHaveText('24 tok/s')
+})
+
+test('shows an estimated tokens per second for a Grok pane from its session files', async ({
+  electronApp,
+  orcaPage
+}) => {
+  const descriptor = await prepareFocusedPane(orcaPage)
+  const grokHome = createTranscriptDir()
+  const cwd = path.join(grokHome, 'workspace')
+  const sessionId = 'e2e-grok-throughput-session'
+  const sessionDir = path.join(grokHome, 'sessions', grokEncodedCwdDirName(cwd)!, sessionId)
+  mkdirSync(sessionDir, { recursive: true })
+  // Why: Grok records no token counts; 800 visible characters over a 5 s loop estimate to ~40 tok/s.
+  writeFileSync(
+    path.join(sessionDir, 'events.jsonl'),
+    `${[
+      JSON.stringify({ ts: at(0), type: 'turn_started', model_id: 'grok-4.6' }),
+      JSON.stringify({ ts: at(0), type: 'loop_started', loop_index: 1 }),
+      JSON.stringify({ ts: at(1_200), type: 'first_token' }),
+      JSON.stringify({ ts: at(1_200), type: 'phase_changed', phase: 'streaming_text' }),
+      JSON.stringify({ ts: at(5_000), type: 'turn_ended', outcome: 'completed' })
+    ].join('\n')}\n`
+  )
+  writeFileSync(
+    path.join(sessionDir, 'chat_history.jsonl'),
+    `${[
+      JSON.stringify({ type: 'user', content: 'go' }),
+      JSON.stringify({ type: 'assistant', content: 'x'.repeat(800), model_id: 'grok-4.6' })
+    ].join('\n')}\n`
+  )
+  const session = { sessionId, cwd }
+  const envelope = { grokHome }
+
+  await postHook(
+    electronApp,
+    'grok',
+    descriptor,
+    { ...session, hook_event_name: 'UserPromptSubmit', prompt: 'go' },
+    envelope
+  )
+  await postHook(electronApp, 'grok', descriptor, { ...session, hook_event_name: 'Stop' }, envelope)
+
+  const readout = orcaPage.getByLabel('Agent throughput, ~40 tok/s')
+  await expect(readout).toBeVisible()
+  await expect(readout).toHaveText('~40 tok/s')
 })

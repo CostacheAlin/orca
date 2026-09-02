@@ -7,7 +7,7 @@ describe('resolveAgentThroughputPlaceholderReason', () => {
       'no-pane'
     )
     expect(
-      resolveAgentThroughputPlaceholderReason({ paneKey: 'tab:leaf', agentType: 'grok' })
+      resolveAgentThroughputPlaceholderReason({ paneKey: 'tab:leaf', agentType: 'kimi' })
     ).toBe('unmeasured-agent')
     expect(
       resolveAgentThroughputPlaceholderReason({ paneKey: 'tab:leaf', agentType: 'claude' })

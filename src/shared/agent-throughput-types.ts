@@ -23,6 +23,8 @@ export type AgentThroughputSample = {
   turnMessageCount: number
   /** Epoch ms when the hook server observed the sample; orders pushes against snapshots. */
   observedAt: number
+  /** True when the agent reports no token counts and `outputTokens` was estimated from text length. */
+  estimated?: boolean
 }
 
 export type AgentThroughputClearIpcPayload = { paneKey: string }
@@ -35,15 +37,18 @@ export type AgentMessageThroughput = {
   outputTokens: number
   generationMs: number
   completedAt: number
+  /** Set by readers that estimate tokens from text length because the agent records none. */
+  estimated?: true
 }
 
-/** Hook sources whose session record carries per-message token counts Orca can read. */
+/** Hook sources Orca can report for: per-message token counts on disk, or (Grok) a text-length estimate. */
 export const AGENT_THROUGHPUT_MEASURED_AGENTS = [
   'claude',
   'codex',
   'gemini',
   'opencode',
-  'mimo-code'
+  'mimo-code',
+  'grok'
 ] as const
 
 export function isAgentThroughputMeasured(agentType: string | undefined | null): boolean {

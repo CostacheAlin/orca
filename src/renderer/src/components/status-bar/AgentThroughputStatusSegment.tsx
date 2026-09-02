@@ -86,7 +86,7 @@ export function AgentThroughputStatusSegment({
   const working = paneAgent?.state === 'working'
   const measuredFor = translate(
     'auto.components.status.bar.AgentThroughputStatusSegment.measuredFor',
-    'Measured for Claude Code, Codex, Gemini CLI and OpenCode, per completed message.'
+    'Measured per completed message for Claude Code, Codex, Gemini CLI and OpenCode; estimated for Grok.'
   )
   if (!sample) {
     // Why: an enabled item must always render, or "nothing" is indistinguishable from "off".
@@ -108,7 +108,10 @@ export function AgentThroughputStatusSegment({
       </Tooltip>
     )
   }
-  const readout = readoutLabel(formatTokensPerSecondValue(sample.tokensPerSecond))
+  // Why: a leading "~" keeps an estimate from reading as a measured figure at a glance.
+  const readout = readoutLabel(
+    `${sample.estimated ? '~' : ''}${formatTokensPerSecondValue(sample.tokensPerSecond)}`
+  )
   const turnAverage =
     sample.turnMessageCount > 0
       ? computeTokensPerSecond(sample.turnOutputTokens, sample.turnGenerationMs)
@@ -145,6 +148,14 @@ export function AgentThroughputStatusSegment({
           <div className="text-muted-foreground">
             {[getAgentDisplayName(sample.agentType), sample.model].filter(Boolean).join(' · ')}
           </div>
+          {sample.estimated ? (
+            <div className="text-muted-foreground">
+              {translate(
+                'auto.components.status.bar.AgentThroughputStatusSegment.estimated',
+                'Estimated from text length: this agent records no token counts, so hidden reasoning is approximated.'
+              )}
+            </div>
+          ) : null}
           <div className="text-muted-foreground">{measuredFor}</div>
         </div>
       </TooltipContent>
