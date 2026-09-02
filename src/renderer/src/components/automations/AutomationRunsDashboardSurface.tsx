@@ -1,9 +1,11 @@
 import React from 'react'
 import { toRuntimeExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
 import type { AutomationListRow } from './automation-list-row-identity'
-import type { AutomationRunsDashboardEntry } from './automation-runs-dashboard-model'
+import type {
+  AutomationRunsDashboardEntry,
+  AutomationRunsDashboardFailure
+} from './automation-runs-dashboard-model'
 import { AutomationRunsDashboard } from './AutomationRunsDashboard'
-import type { AutomationRunsDashboardFailure } from './automation-runs-dashboard-model'
 import type { AutomationsPageView } from './automation-page-state'
 
 export function AutomationRunsDashboardSurface({
