@@ -3961,7 +3961,11 @@
             "ariaLabel": "Agent throughput, {{value}}",
             "lastMessage": "Last message: {{tokens}} tokens in {{duration}}",
             "turnAverage": "This turn: {{value}} tok/s across {{count}} message(s)",
-            "updatesHint": "Updates when an assistant message completes"
+            "updatesHint": "Updates when an assistant message completes",
+            "noPane": "Focus a terminal pane running an agent.",
+            "unmeasuredAgent": "Not available for {{agent}}: it records no token counts per message.",
+            "waiting": "Waiting for the focused agent to complete a message.",
+            "measuredFor": "Measured for Claude Code, Codex, Gemini CLI and OpenCode, per completed message."
           }
         }
       },

@@ -8,7 +8,7 @@ import {
   readLastClaudeMessageThroughput
 } from './agent-hook-listener/claude-transcript-throughput'
 
-const BASE = Date.parse('2026-09-02T14:12:22.409Z')
+const BASE = Date.parse('2026-09-02T18:09:40.208Z')
 
 function at(offsetMs: number): string {
   return new Date(BASE + offsetMs).toISOString()
@@ -41,7 +41,12 @@ function assistantRow(args: {
   })
 }
 
-function plainRow(type: string, uuid: string, parentUuid: string | null, offsetMs: number): string {
+function row(
+  type: string,
+  uuid: string | null,
+  parentUuid: string | null,
+  offsetMs: number
+): string {
   return JSON.stringify({ type, uuid, parentUuid, timestamp: at(offsetMs) })
 }
 
@@ -62,52 +67,169 @@ afterEach(() => {
 })
 
 describe('claude transcript throughput', () => {
-  it('measures the newest message from its parent row to its last content-block row', () => {
+  it('starts at the first block’s parent row even when later-stamped rows were written mid-stream', () => {
+    // Why: the real shape — reminders are attached right before the request, queued input lands
+    // while the model streams, and the block rows are flushed together with their own timestamps.
     const transcriptPath = writeTranscript([
-      plainRow('user', 'u1', null, 0),
-      plainRow('attachment', 'att1', 'u1', 10),
       assistantRow({
-        uuid: 'a1',
+        uuid: 'p1',
+        parentUuid: null,
+        messageId: 'msg_prev',
+        offsetMs: -4_000,
+        outputTokens: 900,
+        block: 'tool_use'
+      }),
+      row('user', 'u0', 'p1', 0),
+      row('attachment', 'att0', 'u0', 17_821),
+      row('attachment', 'att1', 'att0', 17_823),
+      row('queue-operation', null, null, 37_087),
+      row('queue-operation', null, null, 77_803),
+      row('queue-operation', null, null, 115_171),
+      assistantRow({
+        uuid: 't1',
         parentUuid: 'att1',
         messageId: 'msg_1',
-        offsetMs: 32_000,
-        outputTokens: 2497,
+        offsetMs: 111_652,
+        outputTokens: 8393,
         block: 'thinking'
       }),
       assistantRow({
-        uuid: 'a2',
-        parentUuid: 'a1',
+        uuid: 't2',
+        parentUuid: 't1',
         messageId: 'msg_1',
-        offsetMs: 36_483,
-        outputTokens: 2497
+        offsetMs: 113_429,
+        outputTokens: 8393,
+        block: 'thinking'
       }),
-      plainRow('system', 's1', 'a2', 36_760)
+      assistantRow({
+        uuid: 'w1',
+        parentUuid: 't2',
+        messageId: 'msg_1',
+        offsetMs: 132_437,
+        outputTokens: 8393,
+        block: 'tool_use'
+      }),
+      assistantRow({
+        uuid: 'r1',
+        parentUuid: 'w1',
+        messageId: 'msg_1',
+        offsetMs: 132_685,
+        outputTokens: 8393,
+        block: 'tool_use'
+      }),
+      row('attachment', 'att2', 'r1', 132_662),
+      row('user', 'u1', 'w1', 132_902),
+      row('user', 'u2', 'r1', 133_394)
     ])
 
     expect(readLastClaudeMessageThroughput(transcriptPath)).toEqual({
       messageId: 'msg_1',
       model: 'claude-fable-5-1',
-      outputTokens: 2497,
-      generationMs: 36_473,
-      completedAt: BASE + 36_483
+      outputTokens: 8393,
+      generationMs: 132_685 - 17_823,
+      completedAt: BASE + 132_685
     })
+  })
+
+  it('spans a message whose tool results are interleaved with its blocks', () => {
+    const transcriptPath = writeTranscript([
+      row('user', 'u0', null, 0),
+      assistantRow({
+        uuid: 'a1',
+        parentUuid: 'u0',
+        messageId: 'msg_1',
+        offsetMs: 2_574,
+        outputTokens: 2108,
+        block: 'tool_use'
+      }),
+      row('user', 'r1', 'a1', 3_015),
+      assistantRow({
+        uuid: 'a2',
+        parentUuid: 'r1',
+        messageId: 'msg_1',
+        offsetMs: 5_557,
+        outputTokens: 2108,
+        block: 'tool_use'
+      }),
+      row('user', 'r2', 'a2', 6_033),
+      assistantRow({
+        uuid: 'a3',
+        parentUuid: 'r2',
+        messageId: 'msg_1',
+        offsetMs: 11_645,
+        outputTokens: 2108,
+        block: 'tool_use'
+      }),
+      row('user', 'r3', 'a3', 12_100)
+    ])
+
+    expect(readLastClaudeMessageThroughput(transcriptPath)).toMatchObject({
+      messageId: 'msg_1',
+      generationMs: 11_645,
+      completedAt: BASE + 11_645
+    })
+  })
+
+  it('prefers the last user row when the parent attachment carries a stale timestamp', () => {
+    const transcriptPath = writeTranscript([
+      row('user', 'u0', null, 10_000),
+      row('attachment', 'queued', 'u0', 2_000),
+      assistantRow({
+        uuid: 'a1',
+        parentUuid: 'queued',
+        messageId: 'msg_1',
+        offsetMs: 16_000,
+        outputTokens: 300
+      })
+    ])
+
+    expect(readLastClaudeMessageThroughput(transcriptPath)).toMatchObject({
+      generationMs: 6_000
+    })
+  })
+
+  it('falls back to the last user row, then to the previous message, when the parent is missing', () => {
+    const missingParent = writeTranscript([
+      row('user', 'u0', null, 0),
+      row('progress', 'pr', null, 500),
+      assistantRow({
+        uuid: 'a1',
+        parentUuid: 'missing',
+        messageId: 'msg_1',
+        offsetMs: 3_500,
+        outputTokens: 50
+      })
+    ])
+    expect(readLastClaudeMessageThroughput(missingParent)).toMatchObject({ generationMs: 3_500 })
+
+    const retryAfterError = writeTranscript([
+      assistantRow({ uuid: 'e1', parentUuid: null, messageId: 'msg_err', offsetMs: 0 }),
+      assistantRow({
+        uuid: 'a1',
+        parentUuid: 'missing',
+        messageId: 'msg_1',
+        offsetMs: 2_500,
+        outputTokens: 40
+      })
+    ])
+    expect(readLastClaudeMessageThroughput(retryAfterError)).toMatchObject({ generationMs: 2_500 })
   })
 
   it('skips sidechain rows and usage-less rows when picking the newest message', () => {
     const transcriptPath = writeTranscript([
-      plainRow('user', 'u1', null, 0),
+      row('user', 'u0', null, 0),
       assistantRow({
         uuid: 'a1',
-        parentUuid: 'u1',
+        parentUuid: 'u0',
         messageId: 'msg_1',
         offsetMs: 4_000,
         outputTokens: 120
       }),
-      plainRow('user', 'u2', 'a1', 5_000),
-      assistantRow({ uuid: 'a2', parentUuid: 'u2', messageId: 'msg_err', offsetMs: 6_000 }),
+      row('user', 'u1', 'a1', 5_000),
+      assistantRow({ uuid: 'e1', parentUuid: 'u1', messageId: 'msg_err', offsetMs: 6_000 }),
       assistantRow({
-        uuid: 'side',
-        parentUuid: 'elsewhere',
+        uuid: 's1',
+        parentUuid: 'x',
         messageId: 'msg_side',
         offsetMs: 7_000,
         outputTokens: 999,
@@ -122,44 +244,23 @@ describe('claude transcript throughput', () => {
     })
   })
 
-  it('falls back to the nearest earlier row when the parent row never appears', () => {
-    const transcriptPath = writeTranscript([
-      plainRow('progress', 'p1', null, 1_000),
-      assistantRow({
-        uuid: 'a1',
-        parentUuid: 'missing',
-        messageId: 'msg_1',
-        offsetMs: 3_500,
-        outputTokens: 50
-      })
-    ])
-
-    expect(readLastClaudeMessageThroughput(transcriptPath)).toMatchObject({
-      messageId: 'msg_1',
-      generationMs: 2_500
-    })
-  })
-
-  it('bounds the parent search and uses the nearest earlier row past the limit', () => {
-    const filler = Array.from({ length: 70 }, (_, index) =>
-      plainRow('progress', `p${index}`, 'u1', 100 + index)
+  it('bounds the walk once the start is known', () => {
+    const filler = Array.from({ length: 600 }, (_, index) =>
+      row('progress', `pr${index}`, null, 100 + index)
     )
     const transcriptPath = writeTranscript([
-      plainRow('user', 'u1', null, 0),
       ...filler,
+      row('user', 'u0', null, 1_000),
       assistantRow({
         uuid: 'a1',
-        parentUuid: 'u1',
+        parentUuid: 'u0',
         messageId: 'msg_1',
-        offsetMs: 2_000,
+        offsetMs: 3_000,
         outputTokens: 40
       })
     ])
 
-    expect(readLastClaudeMessageThroughput(transcriptPath)).toMatchObject({
-      messageId: 'msg_1',
-      generationMs: 2_000 - 169
-    })
+    expect(readLastClaudeMessageThroughput(transcriptPath)).toMatchObject({ generationMs: 2_000 })
   })
 
   it('returns undefined without a measurable message', () => {
@@ -167,21 +268,32 @@ describe('claude transcript throughput', () => {
       undefined
     )
     const noUsage = writeTranscript([
-      plainRow('user', 'u1', null, 0),
-      assistantRow({ uuid: 'a1', parentUuid: 'u1', messageId: 'msg_1', offsetMs: 500 })
+      row('user', 'u0', null, 0),
+      assistantRow({ uuid: 'a1', parentUuid: 'u0', messageId: 'msg_1', offsetMs: 500 })
     ])
     expect(readLastClaudeMessageThroughput(noUsage)).toBe(undefined)
     const sameInstant = writeTranscript([
-      plainRow('user', 'u1', null, 0),
+      row('user', 'u0', null, 0),
       assistantRow({
         uuid: 'a1',
-        parentUuid: 'u1',
+        parentUuid: 'u0',
         messageId: 'msg_1',
         offsetMs: 0,
         outputTokens: 5
       })
     ])
     expect(readLastClaudeMessageThroughput(sameInstant)).toBe(undefined)
+    const noStart = writeTranscript([
+      row('progress', 'pr', null, 0),
+      assistantRow({
+        uuid: 'a1',
+        parentUuid: 'missing',
+        messageId: 'msg_1',
+        offsetMs: 900,
+        outputTokens: 5
+      })
+    ])
+    expect(readLastClaudeMessageThroughput(noStart)).toBe(undefined)
     expect(createClaudeMessageThroughputExtractor().flush()).toBe(undefined)
   })
 

@@ -15,9 +15,10 @@ export type ClaudeTranscriptThroughputRow = {
 
 export type ClaudeMessageThroughput = AgentMessageThroughput
 
-// Why: the parent row can sit behind unrelated rows (attachments, hook progress); bound the walk so
-// a broken chain falls back to the nearest earlier row instead of scanning to the file start.
-const PARENT_ROW_LOOKBACK_LIMIT = 64
+// Why: a message's blocks are interleaved with the results of the tools it calls, so the walk
+// back to the previous assistant message can cross many rows; bound it instead of scanning to
+// the file start.
+const ROW_LOOKBACK_LIMIT = 512
 
 function readString(record: Record<string, unknown>, key: string): string | null {
   const value = record[key]
@@ -50,7 +51,7 @@ export function parseClaudeTranscriptThroughputRow(
   }
   const type = readString(record, 'type')
   const timestamp = readTimestamp(record.timestamp)
-  // Why: sidechain rows belong to a subagent's own parent chain, so they are neither a sample nor a start row.
+  // Why: sidechain rows belong to a subagent's own conversation, so they neither end nor start a message here.
   if (!type || !Number.isFinite(timestamp) || record.isSidechain === true) {
     return null
   }
@@ -75,20 +76,36 @@ type PendingMessage = {
   model: string | null
   outputTokens: number
   completedAt: number
-  parentUuid: string | null
 }
 
 export type ClaudeMessageThroughputExtractor = {
-  /** Visits transcript lines newest-first; yields once the newest message's start row is known. */
+  /** Visits transcript lines newest-first; yields once the previous assistant message is reached. */
   visit: (line: string) => ClaudeMessageThroughput | undefined
-  /** Resolves against the nearest earlier row when the scan ended before the parent row was seen. */
+  /** Resolves against the rows seen so far when the scan ended before a previous message appeared. */
   flush: () => ClaudeMessageThroughput | undefined
 }
 
+/**
+ * Claude Code writes one row per content block, stamped with the block's completion time, and
+ * flushes rows in batches while tool calls already run, so a message's rows are interleaved with
+ * its own tool results and with rows written mid-stream (queued input, reminders) that can carry
+ * later timestamps. The message ends at its last block. It starts at the row its first block
+ * points to via `parentUuid` — the last row prepared before the API request — or, when that row
+ * carries a stale timestamp, at the last user row before the message, whichever is later.
+ */
 export function createClaudeMessageThroughputExtractor(): ClaudeMessageThroughputExtractor {
   let pending: PendingMessage | null = null
-  let nearestEarlierRowAt: number | null = null
+  let wantedParentUuid: string | null = null
+  let parentStartAt: number | null = null
+  let lastUserRowAt: number | null = null
   let rowsPastMessage = 0
+
+  const resolveStart = (fallback: number | null): number | null => {
+    if (parentStartAt !== null && lastUserRowAt !== null) {
+      return Math.max(parentStartAt, lastUserRowAt)
+    }
+    return parentStartAt ?? lastUserRowAt ?? fallback
+  }
 
   const finish = (startedAt: number | null): ClaudeMessageThroughput | undefined => {
     if (!pending || startedAt === null) {
@@ -122,26 +139,34 @@ export function createClaudeMessageThroughputExtractor(): ClaudeMessageThroughpu
           messageId: row.messageId,
           model: row.model,
           outputTokens: row.outputTokens,
-          completedAt: row.timestamp,
-          parentUuid: row.parentUuid
+          completedAt: row.timestamp
         }
+        wantedParentUuid = row.parentUuid
         return undefined
       }
-      if (row.type === 'assistant' && row.messageId === pending.messageId) {
-        // Why: Claude Code writes one row per content block; the earliest row's parent is the message's start.
-        pending.parentUuid = row.parentUuid
-        pending.outputTokens = Math.max(pending.outputTokens, row.outputTokens)
-        pending.model ??= row.model
-        return undefined
+      if (row.type === 'assistant') {
+        if (row.messageId === pending.messageId) {
+          // Why: an earlier block of the same message; everything seen since belonged inside it.
+          pending.outputTokens = Math.max(pending.outputTokens, row.outputTokens)
+          pending.model ??= row.model
+          wantedParentUuid = row.parentUuid
+          parentStartAt = null
+          lastUserRowAt = null
+          return undefined
+        }
+        // Why: the previous assistant message bounds this one; with nothing in between (API retry), its last row is the start.
+        return finish(resolveStart(row.timestamp))
+      }
+      if (row.uuid !== null && row.uuid === wantedParentUuid) {
+        parentStartAt = row.timestamp
+      }
+      if (row.type === 'user') {
+        lastUserRowAt = Math.max(lastUserRowAt ?? Number.NEGATIVE_INFINITY, row.timestamp)
       }
       rowsPastMessage += 1
-      if (row.uuid && row.uuid === pending.parentUuid) {
-        return finish(row.timestamp)
-      }
-      nearestEarlierRowAt ??= row.timestamp
-      return rowsPastMessage >= PARENT_ROW_LOOKBACK_LIMIT ? finish(nearestEarlierRowAt) : undefined
+      return rowsPastMessage >= ROW_LOOKBACK_LIMIT ? finish(resolveStart(null)) : undefined
     },
-    flush: () => finish(nearestEarlierRowAt)
+    flush: () => finish(resolveStart(null))
   }
 }
 

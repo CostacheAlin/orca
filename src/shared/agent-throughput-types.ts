@@ -37,6 +37,22 @@ export type AgentMessageThroughput = {
   completedAt: number
 }
 
+/** Hook sources whose session record carries per-message token counts Orca can read. */
+export const AGENT_THROUGHPUT_MEASURED_AGENTS = [
+  'claude',
+  'codex',
+  'gemini',
+  'opencode',
+  'mimo-code'
+] as const
+
+export function isAgentThroughputMeasured(agentType: string | undefined | null): boolean {
+  return (
+    typeof agentType === 'string' &&
+    (AGENT_THROUGHPUT_MEASURED_AGENTS as readonly string[]).includes(agentType)
+  )
+}
+
 export function computeTokensPerSecond(outputTokens: number, generationMs: number): number {
   if (!(outputTokens > 0) || !(generationMs > 0)) {
     return 0

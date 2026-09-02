@@ -9,30 +9,106 @@ import { computeTokensPerSecond } from '../../../../shared/agent-throughput-type
 import { TUI_AGENT_DISPLAY_NAMES } from '../../../../shared/tui-agent-display-names'
 import { formatTokens } from '../stats/usage-formatters'
 import { formatGenerationDuration, formatTokensPerSecondValue } from './agent-throughput-format'
+import {
+  resolveAgentThroughputPlaceholderReason,
+  type AgentThroughputPlaceholderReason
+} from './agent-throughput-placeholder'
 
 function getAgentDisplayName(agentType: string): string {
   return (TUI_AGENT_DISPLAY_NAMES as Record<string, string | undefined>)[agentType] ?? agentType
 }
 
-/** tok/s of the focused pane's agent; a sample only changes when an assistant message completes. */
+function readoutLabel(value: string): string {
+  return translate(
+    'auto.components.status.bar.AgentThroughputStatusSegment.tokensPerSecond',
+    '{{value}} tok/s',
+    { value }
+  )
+}
+
+function placeholderHint(reason: AgentThroughputPlaceholderReason, agentType?: string): string {
+  if (reason === 'no-pane') {
+    return translate(
+      'auto.components.status.bar.AgentThroughputStatusSegment.noPane',
+      'Focus a terminal pane running an agent.'
+    )
+  }
+  if (reason === 'unmeasured-agent') {
+    return translate(
+      'auto.components.status.bar.AgentThroughputStatusSegment.unmeasuredAgent',
+      'Not available for {{agent}}: it records no token counts per message.',
+      { agent: getAgentDisplayName(agentType ?? '') }
+    )
+  }
+  return translate(
+    'auto.components.status.bar.AgentThroughputStatusSegment.waiting',
+    'Waiting for the focused agent to complete a message.'
+  )
+}
+
+function Readout({
+  iconOnly,
+  value,
+  emphasized
+}: {
+  iconOnly: boolean
+  value: string
+  emphasized: boolean
+}): React.JSX.Element {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded px-1 py-0.5 tabular-nums',
+        // Why: dim while idle so the last reading isn't mistaken for live generation.
+        emphasized ? 'text-foreground' : 'text-muted-foreground'
+      )}
+      aria-label={translate(
+        'auto.components.status.bar.AgentThroughputStatusSegment.ariaLabel',
+        'Agent throughput, {{value}}',
+        { value }
+      )}
+    >
+      <Gauge size={12} />
+      {iconOnly ? null : <span>{value}</span>}
+    </span>
+  )
+}
+
+/** tok/s of the focused pane's agent; a sample only changes when a model call completes. */
 export function AgentThroughputStatusSegment({
   iconOnly
 }: {
   iconOnly: boolean
-}): React.JSX.Element | null {
+}): React.JSX.Element {
   const paneKey = useAppStore(selectActiveTerminalPaneKey)
   const sample = useAppStore((s) => (paneKey ? s.agentThroughputByPaneKey[paneKey] : undefined))
-  const working = useAppStore(
-    (s) => paneKey !== null && s.agentStatusByPaneKey[paneKey]?.state === 'working'
+  const paneAgent = useAppStore((s) => (paneKey ? s.agentStatusByPaneKey[paneKey] : undefined))
+  const working = paneAgent?.state === 'working'
+  const measuredFor = translate(
+    'auto.components.status.bar.AgentThroughputStatusSegment.measuredFor',
+    'Measured for Claude Code, Codex, Gemini CLI and OpenCode, per completed message.'
   )
   if (!sample) {
-    return null
+    // Why: an enabled item must always render, or "nothing" is indistinguishable from "off".
+    const reason = resolveAgentThroughputPlaceholderReason({
+      paneKey,
+      agentType: paneAgent?.agentType
+    })
+    return (
+      <Tooltip delayDuration={150}>
+        <TooltipTrigger asChild>
+          <Readout iconOnly={iconOnly} value={readoutLabel('n/a')} emphasized={false} />
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={6}>
+          <div className="space-y-0.5">
+            <div>{placeholderHint(reason, paneAgent?.agentType)}</div>
+            <div className="text-muted-foreground">{measuredFor}</div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    )
   }
-  const readout = translate(
-    'auto.components.status.bar.AgentThroughputStatusSegment.tokensPerSecond',
-    '{{value}} tok/s',
-    { value: formatTokensPerSecondValue(sample.tokensPerSecond) }
-  )
+  const readout = readoutLabel(formatTokensPerSecondValue(sample.tokensPerSecond))
   const turnAverage =
     sample.turnMessageCount > 0
       ? computeTokensPerSecond(sample.turnOutputTokens, sample.turnGenerationMs)
@@ -40,21 +116,7 @@ export function AgentThroughputStatusSegment({
   return (
     <Tooltip delayDuration={150}>
       <TooltipTrigger asChild>
-        <span
-          className={cn(
-            'inline-flex items-center gap-1 rounded px-1 py-0.5 tabular-nums',
-            // Why: dim while idle so the last reading isn't mistaken for live generation.
-            working ? 'text-foreground' : 'text-muted-foreground'
-          )}
-          aria-label={translate(
-            'auto.components.status.bar.AgentThroughputStatusSegment.ariaLabel',
-            'Agent throughput, {{value}}',
-            { value: readout }
-          )}
-        >
-          <Gauge size={12} />
-          {iconOnly ? null : <span>{readout}</span>}
-        </span>
+        <Readout iconOnly={iconOnly} value={readout} emphasized={working} />
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={6}>
         <div className="space-y-0.5">
@@ -83,12 +145,7 @@ export function AgentThroughputStatusSegment({
           <div className="text-muted-foreground">
             {[getAgentDisplayName(sample.agentType), sample.model].filter(Boolean).join(' · ')}
           </div>
-          <div className="text-muted-foreground">
-            {translate(
-              'auto.components.status.bar.AgentThroughputStatusSegment.updatesHint',
-              'Updates when an assistant message completes'
-            )}
-          </div>
+          <div className="text-muted-foreground">{measuredFor}</div>
         </div>
       </TooltipContent>
     </Tooltip>

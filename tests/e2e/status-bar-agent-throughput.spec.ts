@@ -121,6 +121,8 @@ test('shows tokens per second for the focused pane once a Claude message complet
   orcaPage
 }) => {
   const descriptor = await prepareFocusedPane(orcaPage)
+  // Why: an enabled item must be visible before any message completes, not silently absent.
+  await expect(orcaPage.getByLabel('Agent throughput, n/a tok/s')).toHaveText('n/a tok/s')
   const transcriptDir = createTranscriptDir()
   const transcriptPath = path.join(transcriptDir, 'session.jsonl')
   const lines = [

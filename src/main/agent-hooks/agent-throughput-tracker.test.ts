@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentMessageThroughput } from '../../shared/agent-throughput-types'
+import {
+  AGENT_THROUGHPUT_MEASURED_AGENTS,
+  type AgentMessageThroughput
+} from '../../shared/agent-throughput-types'
 import {
   AGENT_THROUGHPUT_SOURCE_PROFILES,
   AgentThroughputTracker,
@@ -249,5 +252,12 @@ describe('AgentThroughputTracker', () => {
     expect(gemini.classify('AfterAgent', {})).toBe('measure')
     expect(gemini.classify('SessionStart', {})).toBe('reset')
     expect(gemini.classify('Notification', {})).toBe('ignore')
+  })
+
+  it('advertises exactly the sources it can read', () => {
+    // Why: the renderer's "not available for this agent" hint is driven by the shared list.
+    expect(Object.keys(AGENT_THROUGHPUT_SOURCE_PROFILES).sort()).toEqual(
+      [...AGENT_THROUGHPUT_MEASURED_AGENTS].sort()
+    )
   })
 })
