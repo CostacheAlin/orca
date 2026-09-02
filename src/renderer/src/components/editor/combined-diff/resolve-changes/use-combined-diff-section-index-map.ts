@@ -1,11 +1,10 @@
-import { useMemo, useRef } from 'react'
+import { useLayoutEffect, useMemo, useRef } from 'react'
 import { createCombinedDiffSectionIndexMap } from './combined-diff-section-identity'
 
 type CombinedDiffSectionIndexCache = {
   entrySignature: string
-  sectionCount: number
+  sections: readonly { key: string }[]
   map: Map<string, number>
-  keys: string[]
 }
 
 /**
@@ -23,25 +22,28 @@ export function useCombinedDiffSectionIndexMap({
   sections: readonly { key: string }[]
 }): Map<string, number> {
   const cacheRef = useRef<CombinedDiffSectionIndexCache | null>(null)
-  return useMemo(() => {
+  const sectionIndexByKey = useMemo(() => {
     const previous = cacheRef.current
-    // Section content/loading updates preserve entry order and keys. The entry signature and
-    // count usually change when the navigable structure changes, but compare keys as a guard for
-    // same-sized/reused signatures (and to keep this cache correct if a caller rebuilds sections).
+    // Section content/loading updates preserve entry order and keys. The entry signature usually
+    // changes when the navigable structure changes, but compare keys as a guard for reused
+    // signatures (and to keep this cache correct if a caller rebuilds sections).
     if (
-      previous?.entrySignature === entrySignature &&
-      previous.sectionCount === sections.length &&
-      sections.every((section, index) => previous.keys[index] === section.key)
+      previous !== null &&
+      previous.entrySignature === entrySignature &&
+      previous.sections.length === sections.length &&
+      sections.every((section, index) => previous.sections[index]?.key === section.key)
     ) {
       return previous.map
     }
-    const map = createCombinedDiffSectionIndexMap(sections)
-    cacheRef.current = {
-      entrySignature,
-      sectionCount: sections.length,
-      map,
-      keys: sections.map((section) => section.key)
-    }
-    return map
+    return createCombinedDiffSectionIndexMap(sections)
   }, [entrySignature, sections])
+
+  // Why a committed write and not a render-phase one: React can discard a render, and a cache
+  // seeded from abandoned work would hand a later render a map for sections that never existed.
+  // Layout, not passive, so a synchronous re-render inside the same commit still sees this cache.
+  useLayoutEffect(() => {
+    cacheRef.current = { entrySignature, sections, map: sectionIndexByKey }
+  }, [entrySignature, sectionIndexByKey, sections])
+
+  return sectionIndexByKey
 }
