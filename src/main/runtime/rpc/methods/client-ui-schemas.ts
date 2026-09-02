@@ -62,7 +62,8 @@ const StatusBarItem = z.enum([
   'grok',
   'ssh',
   'resource-usage',
-  'ports'
+  'ports',
+  'throughput'
 ])
 const WorkspaceStatusDefinition = z.object({
   id: z.string(),

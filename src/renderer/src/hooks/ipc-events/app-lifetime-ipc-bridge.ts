@@ -5,6 +5,7 @@ import { attachMobileMarkdownBridge } from '@/runtime/mobile-markdown-bridge'
 import { resetAgentHookCompletionNotificationCoordinators } from '../agent-hook-completion-notifications'
 import { useAppStore } from '../../store'
 import { registerAgentStatusIpcBridge } from './agent-status-ipc-bridge'
+import { registerAgentThroughputIpcBridge } from './agent-throughput-ipc-bridge'
 import { registerBrowserRequestIpcBridge } from './browser-request-ipc-bridge'
 import { registerBrowserStateIpcBridge } from './browser-state-ipc-bridge'
 import { registerContentCreationIpcBridge } from './content-creation-ipc-bridge'
@@ -110,6 +111,7 @@ export function installAppLifetimeIpcEvents(
   registerBrowserRequestIpcBridge(unsubs, isRuntimeEnvironmentActive)
   registerTabLifecycleIpcBridge(unsubs)
   registerRateLimitIpcBridge(unsubs)
+  registerAgentThroughputIpcBridge(unsubs)
   registerDirectSshStateIpcBridge(unsubs, directSshRuntime)
   registerRemoteWorkspaceIpcBridge(unsubs, directSshRuntime)
   registerZoomIpcBridge(unsubs)

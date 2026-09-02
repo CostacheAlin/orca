@@ -133,7 +133,8 @@
         "resourceUsageToggleDescription": "Show the Resource Manager. Click it for CPU, memory, sessions, daemon controls, and workspace disk scans.",
         "portsToggleDescription": "Show live workspace ports. Click it for workspace-scoped ports and external listeners.",
         "antigravityToggleDescription": "Show Antigravity subscription usage for the active workspace.",
-        "grokToggleDescription": "Show Grok subscription credit usage when signed in via Grok CLI."
+        "grokToggleDescription": "Show Grok subscription credit usage when signed in via Grok CLI.",
+        "throughputToggleDescription": "Show tokens per second for the focused terminal’s agent, measured per completed assistant message."
       },
       "menuBarIcon": {
         "title": "Show Menu Bar Icon",
@@ -3690,7 +3691,8 @@
             "grokUsageMenu": "Grok Usage",
             "floatingTerminalNewActivity": "{{label}}, new activity",
             "codexSignInSuccess": "Signed in to Codex",
-            "codexSignInError": "Codex sign-in failed. Please try again."
+            "codexSignInError": "Codex sign-in failed. Please try again.",
+            "throughput": "Agent Tokens/sec"
           },
           "StatusBarUsageEmptyCta": {
             "828c764a79": "Connect an account",
@@ -3953,6 +3955,13 @@
             "contact_note": "The host may still be running; only the Orca connection is unavailable.",
             "last_connected": "Last connected {{value0}}",
             "reconnect_attempt": "Attempt {{value0}}"
+          },
+          "AgentThroughputStatusSegment": {
+            "tokensPerSecond": "{{value}} tok/s",
+            "ariaLabel": "Agent throughput, {{value}}",
+            "lastMessage": "Last message: {{tokens}} tokens in {{duration}}",
+            "turnAverage": "This turn: {{value}} tok/s across {{count}} message(s)",
+            "updatesHint": "Updates when an assistant message completes"
           }
         }
       },
@@ -9054,7 +9063,9 @@
               "close": "close",
               "notification": "notification area",
               "background": "background"
-            }
+            },
+            "throughputTitle": "Agent Tokens/sec",
+            "throughputDescription": "Show the focused agent’s generation speed in the status bar."
           }
         },
         "auto": {
