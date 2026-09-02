@@ -1,0 +1,160 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { AutomationRun } from '../../../../shared/automations-types'
+import type { AutomationAuthorityRef } from '../../../../shared/automation-owner-ref'
+import { capturedAutomationOwner, capturedAutomationOwnerKey } from './automation-captured-owner'
+import { listAutomationRunsForTarget, type AutomationHostTarget } from './automation-host-client'
+import type { AutomationListRow } from './automation-list-row-identity'
+import {
+  dispatchAutomationRunHistoryPage,
+  type AutomationDispatchContext
+} from './automation-row-action-dispatch'
+import {
+  buildAutomationRunsDashboardEntries,
+  getAutomationRunsScope,
+  type AutomationRunsDashboardFailure
+} from './automation-runs-dashboard-model'
+
+const FETCH_CONCURRENCY = 4
+// The persistence contract retains at most 100 final runs per automation;
+// fetching that bound keeps summary cards complete without an extra scan.
+const RUNS_PAGE_SIZE = 100
+
+type DashboardState = {
+  entries: ReturnType<typeof buildAutomationRunsDashboardEntries>
+  failures: AutomationRunsDashboardFailure[]
+  loading: boolean
+  nextCursors: ReadonlyMap<string, string>
+  hasMore: boolean
+  loadMore: () => void
+}
+
+const EMPTY_STATE: DashboardState = {
+  entries: [],
+  failures: [],
+  loading: false,
+  nextCursors: new Map(),
+  hasMore: false,
+  loadMore: () => undefined
+}
+
+export function useAutomationRunsDashboard({
+  enabled,
+  rows,
+  context,
+  legacyTarget,
+  authorityForRow,
+  reloadToken
+}: {
+  enabled: boolean
+  rows: readonly AutomationListRow[]
+  context: AutomationDispatchContext
+  legacyTarget: (row: AutomationListRow) => AutomationHostTarget | null
+  authorityForRow: (row: AutomationListRow) => AutomationAuthorityRef
+  reloadToken: number
+}): DashboardState {
+  const inputRef = useRef({ rows, context, legacyTarget, authorityForRow })
+  inputRef.current = { rows, context, legacyTarget, authorityForRow }
+  const queryKey = useMemo(
+    () =>
+      rows
+        .map((row) =>
+          [
+            row.key,
+            row.automation.updatedAt,
+            capturedAutomationOwnerKey(capturedAutomationOwner(context.capturedOwners, row.key))
+          ].join(':')
+        )
+        .join('|'),
+    [context.capturedOwners, rows]
+  )
+  const [state, setState] = useState<DashboardState>(EMPTY_STATE)
+  const stateRef = useRef(state)
+  stateRef.current = state
+  const [loadMoreToken, setLoadMoreToken] = useState(0)
+  const loadMore = useCallback(() => setLoadMoreToken((token) => token + 1), [])
+  const generationRef = useRef({ queryKey, reloadToken })
+
+  useEffect(() => {
+    if (!enabled) {
+      return
+    }
+    const input = inputRef.current
+    let cancelled = false
+    const loadingMore =
+      generationRef.current.queryKey === queryKey &&
+      generationRef.current.reloadToken === reloadToken &&
+      loadMoreToken > 0 &&
+      stateRef.current.entries.length > 0
+    generationRef.current = { queryKey, reloadToken }
+    const runsByRowKey = new Map<string, AutomationRun[]>()
+    if (loadingMore) {
+      for (const entry of stateRef.current.entries) {
+        const current = runsByRowKey.get(entry.row.key) ?? []
+        current.push(entry.run)
+        runsByRowKey.set(entry.row.key, current)
+      }
+    }
+    const nextCursors = new Map<string, string>()
+    setState((current) =>
+      loadingMore ? { ...current, loading: true } : { ...EMPTY_STATE, loading: true, loadMore }
+    )
+    const failures: AutomationRunsDashboardFailure[] = loadingMore
+      ? [...stateRef.current.failures]
+      : []
+    let nextIndex = 0
+    const fetchNext = async (): Promise<void> => {
+      while (!cancelled && nextIndex < input.rows.length) {
+        const row = input.rows[nextIndex++]
+        const cursor = loadingMore ? stateRef.current.nextCursors.get(row.key) : undefined
+        if (loadingMore && !cursor) {
+          continue
+        }
+        const result = await dispatchAutomationRunHistoryPage(
+          input.context,
+          { rowKey: row.key, automationId: row.automation.id },
+          { limit: RUNS_PAGE_SIZE, ...(cursor ? { cursor } : {}) },
+          async () => ({
+            runs: await listAutomationRunsForTarget(
+              input.legacyTarget(row) ?? { kind: 'local' },
+              row.automation.id
+            ),
+            nextCursor: null
+          }),
+          input.authorityForRow(row)
+        )
+        if (result.ok) {
+          const current = runsByRowKey.get(row.key) ?? []
+          const seen = new Set(current.map((run) => run.id))
+          runsByRowKey.set(row.key, [
+            ...current,
+            ...result.value.runs.filter((run) => !seen.has(run.id))
+          ])
+          if (result.value.nextCursor) {
+            nextCursors.set(row.key, result.value.nextCursor)
+          }
+        } else {
+          failures.push({ row, scope: getAutomationRunsScope(row), notice: result.notice })
+        }
+      }
+    }
+    void Promise.all(
+      Array.from({ length: Math.min(FETCH_CONCURRENCY, input.rows.length) }, fetchNext)
+    ).then(() => {
+      if (!cancelled) {
+        setState({
+          entries: buildAutomationRunsDashboardEntries(input.rows, runsByRowKey),
+          failures,
+          loading: false,
+          nextCursors,
+          hasMore: nextCursors.size > 0,
+          loadMore
+        })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [enabled, loadMore, loadMoreToken, queryKey, reloadToken])
+
+  return enabled ? { ...state, loadMore } : { ...EMPTY_STATE, loadMore }
+}

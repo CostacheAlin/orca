@@ -36,7 +36,7 @@ function touchAutomation(state: PersistedState, automationId: string, now: numbe
   )
 }
 
-export function listAutomationRuns(state: PersistedState, automationId?: string): AutomationRun[] {
+function sortedAutomationRuns(state: PersistedState, automationId?: string): AutomationRun[] {
   const runs = state.automationRuns ?? []
   return [...(automationId ? runs.filter((run) => run.automationId === automationId) : runs)]
     .map((run) => ({
@@ -44,6 +44,24 @@ export function listAutomationRuns(state: PersistedState, automationId?: string)
       precheckResult: normalizeAutomationPrecheckResult(run.precheckResult)
     }))
     .sort((left, right) => right.createdAt - left.createdAt)
+}
+
+export function listAutomationRuns(state: PersistedState, automationId?: string): AutomationRun[] {
+  return sortedAutomationRuns(state, automationId)
+}
+
+export function listAutomationRunsPage(
+  state: PersistedState,
+  automationId: string | undefined,
+  limit = 100,
+  cursor?: string
+): { runs: AutomationRun[]; nextCursor: string | null } {
+  const all = sortedAutomationRuns(state, automationId)
+  const start = cursor ? Math.max(0, Number.parseInt(cursor, 10) || 0) : 0
+  const boundedLimit = Math.min(Math.max(1, limit), 100)
+  const runs = all.slice(start, start + boundedLimit)
+  const next = start + runs.length < all.length ? String(start + runs.length) : null
+  return { runs, nextCursor: next }
 }
 
 export function createAutomationRun(

@@ -10,6 +10,8 @@ import { getAutomationAuthorityTarget } from './automation-host-client'
 import type { AutomationListRow } from './automation-list-row-identity'
 import type { AutomationHostRecoveryAction } from './automation-host-status-descriptors'
 import type { AutomationsPageController } from './use-automations-page-controller'
+import { AutomationRunsDashboardSurface } from './AutomationRunsDashboardSurface'
+import { AutomationsPageBreadcrumb } from './AutomationsPageBreadcrumb'
 
 /** Renders the page from controller state; host/query side effects stay in hooks. */
 export function AutomationsPageSurface({
@@ -22,6 +24,7 @@ export function AutomationsPageSurface({
     local,
     list,
     destination,
+    runsDashboard,
     destinationForm,
     setup,
     runPage,
@@ -44,7 +47,8 @@ export function AutomationsPageSurface({
     sshConnectionStates,
     runtimeStatusByEnvironmentId,
     repoForRow,
-    worktreeForRow
+    worktreeForRow,
+    setPendingAutomationRunNavigation
   } = store
   const {
     createOpen,
@@ -84,7 +88,9 @@ export function AutomationsPageSurface({
     setEditorNotice,
     editorNoticeHost,
     setEditorNoticeHost,
-    isLoading
+    isLoading,
+    pageView,
+    setPageView
   } = local
   const {
     hostCatalog,
@@ -141,9 +147,13 @@ export function AutomationsPageSurface({
         className="flex shrink-0 items-center px-3 pb-3 md:px-5"
         style={{ paddingRight: 'max(0.75rem, var(--window-controls-width, 0px))' }}
       >
-        <h1 className="truncate text-base font-semibold leading-8">
-          {translate('auto.components.automations.AutomationsPage.77c2778945', 'Automations')}
-        </h1>
+        {pageView === 'runs' ? (
+          <AutomationsPageBreadcrumb onBack={() => setPageView('automations')} />
+        ) : (
+          <h1 className="truncate text-base font-semibold leading-8">
+            {translate('auto.components.automations.AutomationsPage.77c2778945', 'Automations')}
+          </h1>
+        )}
       </header>
 
       <AutomationOwnerConflictNotice
@@ -241,7 +251,22 @@ export function AutomationsPageSurface({
         onConfirm={() => void externalActions.confirmDeleteExternalAutomation()}
       />
 
-      {isLoading && !hasListItems ? (
+      {pageView === 'runs' ? (
+        <AutomationRunsDashboardSurface
+          rows={list.visibleRows}
+          entries={runsDashboard.entries}
+          failures={runsDashboard.failures}
+          loading={runsDashboard.loading}
+          hasMore={runsDashboard.hasMore}
+          onLoadMore={runsDashboard.loadMore}
+          now={relativeNow}
+          onRefresh={() => setRunHistoryReloadToken((token) => token + 1)}
+          setPageView={setPageView}
+          selectAutomationRow={list.selectAutomationRow}
+          setPendingAutomationRunNavigation={setPendingAutomationRunNavigation}
+          setIsDetailOpen={setIsDetailOpen}
+        />
+      ) : isLoading && !hasListItems ? (
         <AutomationsPageSkeleton />
       ) : isDetailOpen && (selected || selectedExternal) ? (
         <AutomationsDetailPane
@@ -370,6 +395,10 @@ export function AutomationsPageSurface({
             void pageRefresh.refresh()
           }}
           isRefreshing={isLoading}
+          onOpenRuns={() => {
+            hostCatalog.selectHost({ kind: 'all' })
+            setPageView('runs')
+          }}
         />
       )}
     </main>

@@ -18,6 +18,8 @@ export function useAutomationsPageEscape({
     isDetailOpen,
     selectedAutomationRunPageId,
     selectedExternalRunPage,
+    pageView,
+    setPageView,
     setActivePaneTab,
     setIsDetailOpen,
     setSelectedAutomationRunPageId,
@@ -76,6 +78,12 @@ export function useAutomationsPageEscape({
         return
       }
 
+      if (pageView === 'runs') {
+        event.preventDefault()
+        setPageView('automations')
+        return
+      }
+
       event.preventDefault()
       closeAutomationsPage()
     }
@@ -89,11 +97,13 @@ export function useAutomationsPageEscape({
     deleteTarget,
     externalDeleteTarget,
     isDetailOpen,
+    pageView,
     selectedAutomationRunPageId,
     selectedExternalRunPage,
     setActivePaneTab,
     setIsDetailOpen,
     setSelectedAutomationRunPageId,
-    setSelectedExternalRunPage
+    setSelectedExternalRunPage,
+    setPageView
   ])
 }
