@@ -8,10 +8,12 @@ import {
   getRemoteRuntimePtyEnvironmentId,
   getRemoteRuntimeTerminalHandle
 } from './runtime-terminal-stream'
+import type { RemoteForegroundEvidence } from '../../../shared/foreground-process-evidence'
 
 export type RuntimeTerminalProcessInspection = {
   foregroundProcess: string | null
   hasChildProcesses: boolean
+  foregroundProcessEvidence?: RemoteForegroundEvidence
   // Why: callers must not treat a stale remote handle as authoritative idle evidence.
   unavailable?: true
 }
@@ -115,7 +117,8 @@ export function recordRuntimeTerminalInputForPtyId(ptyId: string, timestamp = Da
 
 export async function inspectRuntimeTerminalProcess(
   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined,
-  ptyId: string
+  ptyId: string,
+  options?: { expectedIncarnationId?: string }
 ): Promise<RuntimeTerminalProcessInspection> {
   const ownerEnvironmentId = getRemoteRuntimePtyEnvironmentId(ptyId)
   const target = ownerEnvironmentId
@@ -123,14 +126,21 @@ export async function inspectRuntimeTerminalProcess(
     : getActiveRuntimeTarget(settings)
   const terminal = getRemoteRuntimeTerminalHandle(ptyId)
   if (target.kind !== 'environment' || !terminal) {
-    return window.api.pty.inspectProcess(ptyId)
+    return options?.expectedIncarnationId
+      ? window.api.pty.inspectProcess(ptyId, options)
+      : window.api.pty.inspectProcess(ptyId)
   }
 
   try {
     const result = await callRuntimeRpc<{ process: RuntimeTerminalProcessInspection }>(
       target,
       'terminal.inspectProcess',
-      { terminal },
+      {
+        terminal,
+        ...(options?.expectedIncarnationId
+          ? { expectedIncarnationId: options.expectedIncarnationId }
+          : {})
+      },
       { timeoutMs: 15_000 }
     )
     return result.process

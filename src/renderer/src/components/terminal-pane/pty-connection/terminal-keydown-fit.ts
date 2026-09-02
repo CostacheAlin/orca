@@ -175,6 +175,9 @@ export function installTerminalKeydownFit(session: ConnectPanePtySession): void 
     paneKey: session.cacheKey,
     statusLane: 'pty',
     getPtyId: () => session.transport.getPtyId(),
+    isRemotePtyId: (ptyId) =>
+      Boolean(isRemoteExecutionHostPtyId(ptyId) || isRemoteRuntimePtyId(ptyId)),
+    getExpectedIncarnationId: () => session.remotePtyIncarnationId ?? null,
     getSettings: () => useAppStore.getState().settings,
     inspectProcess: inspectRuntimeTerminalProcess,
     dispatchHookLifecycle: (payload) =>
@@ -227,8 +230,17 @@ export function installTerminalKeydownFit(session: ConnectPanePtySession): void 
       session.scheduleAgentTaskCompleteNotification(title, {
         agentStatusSnapshot: meta.agentStatus
       }),
-    shouldPollProcessCadence: () =>
-      isAgentTaskCompleteTrackingEnabled() && session.deps.isVisibleRef.current,
+    shouldPollProcessCadence: () => {
+      const ptyId = session.transport.getPtyId()
+      if (ptyId && (isRemoteExecutionHostPtyId(ptyId) || isRemoteRuntimePtyId(ptyId))) {
+        return false
+      }
+      return isAgentTaskCompleteTrackingEnabled() && session.deps.isVisibleRef.current
+    },
+    shouldPollNoEvidenceProcessCadence: () => {
+      const ptyId = session.transport.getPtyId()
+      return !(ptyId && (isRemoteExecutionHostPtyId(ptyId) || isRemoteRuntimePtyId(ptyId)))
+    },
     isProcessInspectionCostly: () => {
       // Why: local Windows inspection forks a powershell.exe whole-process-table
       // CIM scan per poll (~10-40x heavier than POSIX `ps`). Keep the no-evidence

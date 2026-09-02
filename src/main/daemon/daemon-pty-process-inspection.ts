@@ -22,7 +22,10 @@ export abstract class DaemonPtyProcessInspection extends DaemonPtyBufferSnapshot
     return this.hasChildProcessesFromForeground(await this.getForegroundProcess(id))
   }
 
-  async inspectProcess(id: string): Promise<PtyProcessInspection> {
+  async inspectProcess(
+    id: string,
+    options?: { expectedIncarnationId?: string }
+  ): Promise<PtyProcessInspection> {
     if (this.protocolVersion < GET_FOREGROUND_PROCESS_PROTOCOL_VERSION) {
       return { foregroundProcess: null, hasChildProcesses: true, unavailable: true }
     }
@@ -39,10 +42,12 @@ export abstract class DaemonPtyProcessInspection extends DaemonPtyBufferSnapshot
         hasChildProcesses: this.hasChildProcessesFromForeground(foregroundProcess)
       }
     }
-    return this.client.request<{
-      foregroundProcess: string | null
-      hasChildProcesses: boolean
-    }>('inspectProcess', { sessionId: id })
+    return this.client.request<PtyProcessInspection>('inspectProcess', {
+      sessionId: id,
+      ...(options?.expectedIncarnationId
+        ? { expectedIncarnationId: options.expectedIncarnationId }
+        : {})
+    })
   }
 
   async getForegroundProcess(id: string): Promise<string | null> {

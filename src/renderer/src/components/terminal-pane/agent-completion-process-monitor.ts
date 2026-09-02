@@ -5,12 +5,11 @@ import {
 import type { RecognizedAgentProcess } from '../../../../shared/agent-process-recognition'
 import { recognizeAgentProcess } from '../../../../shared/agent-process-recognition'
 import type { RuntimeTerminalProcessInspection } from '@/runtime/runtime-terminal-inspection'
-import {
-  NO_EVIDENCE_ACTIVITY_HOT_WINDOW_MS,
-  POLL_TIER_INTERVAL_MS,
-  type PollCadenceTier
-} from './agent-completion-poll-cadence'
 import type { ProcessMonitorOptions } from './agent-completion-process-types'
+import { parseAppSshPtyId } from '../../../../shared/ssh-pty-id'
+import { getRemoteRuntimeTerminalHandle } from '@/runtime/runtime-terminal-stream'
+import { admitRemoteForegroundEvidence } from '../../../../shared/remote-foreground-evidence-admission'
+import { createAgentCompletionPollScheduler } from './agent-completion-poll-scheduler'
 
 export function createAgentCompletionProcessMonitor({
   options,
@@ -23,14 +22,30 @@ export function createAgentCompletionProcessMonitor({
   hasPendingCodexAttention,
   dispatchCompletion
 }: ProcessMonitorOptions) {
-  function clearPollTimer(): void {
-    if (state.pollTimer === null) {
+  let remoteAuthorityGeneration: string | null = null
+  let remoteObservationEpoch = -1
+  let remoteBindingKey: string | null = null
+
+  const expectedRemotePtyId = (ptyId: string): string =>
+    parseAppSshPtyId(ptyId)?.relayPtyId ?? getRemoteRuntimeTerminalHandle(ptyId) ?? ptyId
+
+  function bindRemoteInspectionGeneration(ptyId: string, incarnationId: string | null): void {
+    if (options.isRemotePtyId?.(ptyId) !== true) {
       return
     }
-    clearTimeout(state.pollTimer)
-    state.pollTimer = null
-    state.pollTimerTier = null
+    const bindingKey = `${ptyId}\0${incarnationId ?? ''}`
+    if (remoteBindingKey === bindingKey) {
+      return
+    }
+    remoteBindingKey = bindingKey
+    remoteAuthorityGeneration = null
+    remoteObservationEpoch = -1
+    // A same-id replacement must invalidate a completion read already queued
+    // for the predecessor before the successor can be sampled.
+    state.inspectionGeneration += 1
   }
+  const { clearPollTimer, scheduleNextPoll, shouldRunCadenceInspection } =
+    createAgentCompletionPollScheduler({ options, state, pendingTitle, requestInspection })
 
   function handleRecognizedProcess(process: RecognizedAgentProcess): void {
     state.pendingProcessExitAgent = null
@@ -67,7 +82,77 @@ export function createAgentCompletionProcessMonitor({
     establishAgentEvidence()
   }
 
-  function handleInspectionResult(result: RuntimeTerminalProcessInspection): boolean {
+  function handleInspectionResult(
+    result: RuntimeTerminalProcessInspection,
+    requestStartedAtMonotonic: number
+  ): boolean {
+    const remote = options.isRemotePtyId?.(options.getPtyId() ?? '') === true
+    if (remote) {
+      const evidence = result.foregroundProcessEvidence
+      // Remote identity is host-authoritative. Bare compatibility names,
+      // transport failures, and unverifiable observations never mutate
+      // routing state or synthesize process exit.
+      const expectedIncarnationId = options.getExpectedIncarnationId?.() ?? null
+      const ptyId = options.getPtyId()
+      const bindingKey = `${ptyId ?? ''}\0${expectedIncarnationId ?? ''}`
+      if (remoteBindingKey !== bindingKey) {
+        remoteBindingKey = bindingKey
+        remoteAuthorityGeneration = null
+        remoteObservationEpoch = -1
+      }
+      const admitted = admitRemoteForegroundEvidence(evidence, {
+        expectedPtyId: ptyId ? expectedRemotePtyId(ptyId) : '',
+        expectedIncarnationId,
+        requestStartedAtMonotonic,
+        receivedAtMonotonic: performance.now(),
+        lastAuthorityGeneration: remoteAuthorityGeneration,
+        lastObservationEpoch: remoteObservationEpoch
+      })
+      if (!admitted) {
+        state.pendingProcessExitAgent = null
+        state.consecutiveInspectionErrors += 1
+        return false
+      }
+      remoteAuthorityGeneration = admitted.authorityGeneration
+      remoteObservationEpoch = admitted.observationEpoch
+      if (admitted.verdict === 'exited') {
+        const exited = state.lastForegroundAgent
+        if (exited && state.hasAgentRunEvidence) {
+          if (options.shouldSuppressConfirmedProcessExitCompletion?.(exited) !== true) {
+            dispatchCompletion('process-exit', exited.processName, {
+              terminalIdleConfirmed: true,
+              completionIdentity: {
+                source: 'process-exit',
+                identity: `${exited.agent}:${exited.processName}`,
+                agentIdentity: exited.agent
+              }
+            })
+          }
+        }
+        state.lastForegroundAgent = null
+        clearAgentRunEvidence()
+        return false
+      }
+      if (admitted.verdict !== 'live') {
+        state.pendingProcessExitAgent = null
+        return false
+      }
+      state.consecutiveInspectionErrors = 0
+      // A host-stamped shell/unknown foreground is still not process-exit
+      // evidence. Remote completion may recognize only the fenced process
+      // name; the compatibility `foregroundProcess` string is display-only.
+      if (admitted.processName === null) {
+        state.pendingProcessExitAgent = null
+        return false
+      }
+      const recognizedRemote = recognizeAgentProcess(admitted.processName)
+      if (!recognizedRemote) {
+        state.pendingProcessExitAgent = null
+        return false
+      }
+      handleRecognizedProcess(recognizedRemote)
+      return true
+    }
     if (result.unavailable === true) {
       state.pendingProcessExitAgent = null
       state.consecutiveInspectionErrors += 1
@@ -141,8 +226,11 @@ export function createAgentCompletionProcessMonitor({
     if (!ptyId) {
       return
     }
+    const expectedIncarnationIdAtRequest = options.getExpectedIncarnationId?.() ?? null
+    bindRemoteInspectionGeneration(ptyId, expectedIncarnationIdAtRequest)
     state.inspectionInFlight = true
     const generationAtRequest = state.inspectionGeneration
+    const requestStartedAtMonotonic = performance.now()
     const pendingTitleIdAtRequest = priority === 'pending-title' ? pendingTitle.get()?.id : null
     enqueueAgentProcessInspection({
       priority,
@@ -151,14 +239,22 @@ export function createAgentCompletionProcessMonitor({
         let inspectedRecognizedAgent = false
         let inspectionSucceeded = false
         try {
-          const result = await options.inspectProcess(options.getSettings(), ptyId)
-          if (!state.disposed && generationAtRequest === state.inspectionGeneration) {
+          const result = await (expectedIncarnationIdAtRequest
+            ? options.inspectProcess(options.getSettings(), ptyId, {
+                expectedIncarnationId: expectedIncarnationIdAtRequest
+              })
+            : options.inspectProcess(options.getSettings(), ptyId))
+          if (
+            !state.disposed &&
+            generationAtRequest === state.inspectionGeneration &&
+            (options.getExpectedIncarnationId?.() ?? null) === expectedIncarnationIdAtRequest
+          ) {
             const currentPendingTitle = pendingTitle.get()
             const appliesToCurrentPendingTitle =
               !currentPendingTitle ||
               (priority === 'pending-title' && currentPendingTitle.id === pendingTitleIdAtRequest)
             if (appliesToCurrentPendingTitle) {
-              inspectedRecognizedAgent = handleInspectionResult(result)
+              inspectedRecognizedAgent = handleInspectionResult(result, requestStartedAtMonotonic)
             }
             inspectionSucceeded = true
           }
@@ -194,70 +290,6 @@ export function createAgentCompletionProcessMonitor({
         }
       }
     })
-  }
-
-  function shouldRunCadenceInspection(): boolean {
-    return (
-      state.hasAgentRunEvidence ||
-      state.lastForegroundAgent !== null ||
-      (options.shouldPollProcessCadence?.() !== false &&
-        options.shouldPollNoEvidenceProcessCadence?.() !== false) ||
-      (options.shouldPollProcessCadence?.() !== false &&
-        state.lastPaneActivityAt !== null &&
-        Date.now() - state.lastPaneActivityAt < NO_EVIDENCE_ACTIVITY_HOT_WINDOW_MS)
-    )
-  }
-
-  function currentPollTier(): PollCadenceTier {
-    if (options.shouldPollProcessCadence?.() === false) {
-      return 'hidden'
-    }
-    if (state.lastForegroundAgent) {
-      return 'active'
-    }
-    if (state.hasAgentRunEvidence) {
-      return 'idle'
-    }
-    if (
-      options.isProcessInspectionCostly?.() === true &&
-      (state.lastPaneActivityAt === null ||
-        Date.now() - state.lastPaneActivityAt >= NO_EVIDENCE_ACTIVITY_HOT_WINDOW_MS)
-    ) {
-      return 'no-evidence'
-    }
-    return 'idle'
-  }
-
-  function scheduleNextPoll(): void {
-    if (state.disposed || !state.pollTrackingStarted || !options.isLive() || pendingTitle.get()) {
-      return
-    }
-    const tier = currentPollTier()
-    if (state.pollTimer !== null) {
-      if (
-        state.pollTimerTier !== null &&
-        POLL_TIER_INTERVAL_MS[tier] < POLL_TIER_INTERVAL_MS[state.pollTimerTier]
-      ) {
-        clearPollTimer()
-      } else {
-        return
-      }
-    }
-    if (!shouldRunCadenceInspection() || !options.getPtyId()) {
-      return
-    }
-    const base = POLL_TIER_INTERVAL_MS[tier]
-    const backoff =
-      state.consecutiveInspectionErrors > 0
-        ? Math.min(Math.max(10_000, base), base * 2 ** state.consecutiveInspectionErrors)
-        : base
-    const interval = Math.round(backoff * (1 + (Math.random() * 0.2 - 0.1)))
-    state.pollTimerTier = tier
-    state.pollTimer = setTimeout(() => {
-      state.pollTimer = null
-      state.pollTimerTier = null
-      requestInspection('cadence')
-    }, interval)
   }
 
   return {

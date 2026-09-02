@@ -167,20 +167,27 @@ export function installPtyInspectIpcHandlers(deps: {
     }
   )
 
-  ipcMain.handle('pty:inspectProcess', async (_event, args: { id: string }) => {
-    // Why: same routing hazard as pty:hasPty — an unroutable id must read as unavailable, not as a local-provider answer or a raised IPC error.
-    if (typeof args?.id !== 'string' || !args.id || args.id.startsWith('remote:')) {
-      return { foregroundProcess: null, hasChildProcesses: false, unavailable: true as const }
+  ipcMain.handle(
+    'pty:inspectProcess',
+    async (_event, args: { id: string; expectedIncarnationId?: string }) => {
+      // Why: same routing hazard as pty:hasPty — an unroutable id must read as unavailable, not as a local-provider answer or a raised IPC error.
+      if (typeof args?.id !== 'string' || !args.id || args.id.startsWith('remote:')) {
+        return { foregroundProcess: null, hasChildProcesses: false, unavailable: true as const }
+      }
+      // Why: the pre-swap LocalPtyProvider does not own restored daemon ids, so
+      // nothing it reports about one is an observation; the post-swap owner must
+      // answer completion-sensitive inspection.
+      await awaitSwapWindow(args.id)
+      if (!hasPtyProviderForInspection(args.id)) {
+        return { foregroundProcess: null, hasChildProcesses: false, unavailable: true as const }
+      }
+      return args.expectedIncarnationId
+        ? inspectPtyProviderProcessForRenderer(getProviderForPty(args.id), args.id, {
+            expectedIncarnationId: args.expectedIncarnationId
+          })
+        : inspectPtyProviderProcessForRenderer(getProviderForPty(args.id), args.id)
     }
-    // Why: the pre-swap LocalPtyProvider does not own restored daemon ids, so
-    // nothing it reports about one is an observation; the post-swap owner must
-    // answer completion-sensitive inspection.
-    await awaitSwapWindow(args.id)
-    if (!hasPtyProviderForInspection(args.id)) {
-      return { foregroundProcess: null, hasChildProcesses: false, unavailable: true as const }
-    }
-    return inspectPtyProviderProcessForRenderer(getProviderForPty(args.id), args.id)
-  })
+  )
 
   ipcMain.handle(
     'pty:confirmForegroundProcess',

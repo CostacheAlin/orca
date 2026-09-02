@@ -16,6 +16,7 @@ export type { AgentForegroundResolutionOptions } from './windows-agent-foregroun
 export {
   resolveAgentForegroundProcessesBatch,
   resolveAgentForegroundProcessesFromIndex,
+  resolveRemoteForegroundEvidence,
   toForegroundProcessEvidence,
   type BatchedForegroundProcessOptions,
   type BatchedForegroundProcessRequest,

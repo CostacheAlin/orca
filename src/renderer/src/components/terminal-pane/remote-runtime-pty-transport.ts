@@ -177,6 +177,7 @@ export function createRemoteRuntimePtyTransport(
   let remotePtyId: string | null = null
   let authoritativeExecutionHostId: ExecutionHostId | null = executionHostId ?? null
   let authoritativeHostPlatform: NodeJS.Platform | null = null
+  let authoritativePtyIncarnationId: string | null = null
   let currentRuntimeEnvironmentId = runtimeEnvironmentId
   const runtimeEnvironmentPairingRevision = getRuntimeEnvironmentRevision(runtimeEnvironmentId)
   let multiplexedStream: RemoteRuntimeMultiplexedTerminal | null = null
@@ -338,9 +339,11 @@ export function createRemoteRuntimePtyTransport(
   const adoptExecutionMetadata = (terminal: {
     executionHostId?: ExecutionHostId
     hostPlatform?: NodeJS.Platform
+    incarnationId?: string | null
   }): void => {
     authoritativeExecutionHostId = terminal.executionHostId ?? authoritativeExecutionHostId
     authoritativeHostPlatform = terminal.hostPlatform ?? authoritativeHostPlatform
+    authoritativePtyIncarnationId = terminal.incarnationId ?? null
   }
   const viewportClaimReadyWaiters = new Set<(ready: boolean) => void>()
   const clearPendingViewportClaim = (): void => {
@@ -527,17 +530,18 @@ export function createRemoteRuntimePtyTransport(
     const terminalTabs = getHostSessionTerminalSurfaces(snapshot, hostTabId, {
       matchRequestedLeaf: false
     })
-    if (leafId) {
-      const requestedLeaf = terminalTabs.find(
-        (tab) => tab.status === 'ready' && tab.parentTabId === hostTabId && tab.leafId === leafId
-      )
-      return requestedLeaf?.terminal ?? null
+    const selected = leafId
+      ? terminalTabs.find(
+          (tab) => tab.status === 'ready' && tab.parentTabId === hostTabId && tab.leafId === leafId
+        )
+      : (terminalTabs.find(
+          (tab) => tab.status === 'ready' && tab.parentTabId === hostTabId && tab.isActive
+        ) ?? terminalTabs.find((tab) => tab.status === 'ready' && tab.parentTabId === hostTabId))
+    if (selected?.status === 'ready') {
+      authoritativePtyIncarnationId = selected.incarnationId ?? null
+      return selected.terminal
     }
-    const preferred =
-      terminalTabs.find(
-        (tab) => tab.status === 'ready' && tab.parentTabId === hostTabId && tab.isActive
-      ) ?? terminalTabs.find((tab) => tab.status === 'ready' && tab.parentTabId === hostTabId)
-    return preferred?.terminal ?? null
+    return null
   }
 
   function getHostSessionTerminalSurfaces(
@@ -952,7 +956,8 @@ export function createRemoteRuntimePtyTransport(
     return {
       id: remotePtyId,
       replay: '',
-      isReattach: true
+      isReattach: true,
+      ...(authoritativePtyIncarnationId ? { incarnationId: authoritativePtyIncarnationId } : {})
     } satisfies PtyConnectResult
   }
 
@@ -1236,7 +1241,12 @@ export function createRemoteRuntimePtyTransport(
     ) {
       return undefined
     }
-    return { id: remotePtyId, replay: '', isReattach: true }
+    return {
+      id: remotePtyId,
+      replay: '',
+      isReattach: true,
+      ...(authoritativePtyIncarnationId ? { incarnationId: authoritativePtyIncarnationId } : {})
+    }
   }
 
   function recoverExpiredHostPane(): void {
@@ -1258,6 +1268,7 @@ export function createRemoteRuntimePtyTransport(
         if (destroyed || handle !== expiredHandle) {
           return
         }
+        const previousIncarnationId = authoritativePtyIncarnationId
         adoptExecutionMetadata(terminal)
         const replacedPtyId = remotePtyId
         handle = terminal.handle
@@ -1265,10 +1276,19 @@ export function createRemoteRuntimePtyTransport(
         unregisterShutdownHandlers(replacedPtyId)
         registerShutdownHandlers(remotePtyId)
         connected = true
-        if (replacedPtyId && replacedPtyId !== remotePtyId) {
-          replaceFitOverridePtyId(replacedPtyId, remotePtyId)
-          replaceDriverPtyId(replacedPtyId, remotePtyId)
-          onPtyRebind?.(remotePtyId, replacedPtyId)
+        if (
+          replacedPtyId &&
+          (replacedPtyId !== remotePtyId || previousIncarnationId !== authoritativePtyIncarnationId)
+        ) {
+          if (replacedPtyId !== remotePtyId) {
+            replaceFitOverridePtyId(replacedPtyId, remotePtyId)
+            replaceDriverPtyId(replacedPtyId, remotePtyId)
+          }
+          if (authoritativePtyIncarnationId) {
+            onPtyRebind?.(remotePtyId, replacedPtyId, authoritativePtyIncarnationId)
+          } else {
+            onPtyRebind?.(remotePtyId, replacedPtyId)
+          }
         }
         await subscribeToHandle()
       })
@@ -1500,12 +1520,16 @@ export function createRemoteRuntimePtyTransport(
     }
   }
 
-  function rebindRemoteTerminalHandle(nextHandle: string): void {
+  function rebindRemoteTerminalHandle(
+    nextHandle: string,
+    nextIncarnationId: string | null = null
+  ): void {
     clearPublishedHandleWait()
     const replacedPtyId = remotePtyId
     unregisterShutdownHandlers(replacedPtyId)
     handle = nextHandle
     remotePtyId = toRemoteRuntimePtyId(nextHandle, currentRuntimeEnvironmentId)
+    authoritativePtyIncarnationId = nextIncarnationId
     resetRecoveryReplacementPolicy()
     resetSameHandleEndReuse()
     registerShutdownHandlers(remotePtyId)
@@ -1514,7 +1538,11 @@ export function createRemoteRuntimePtyTransport(
     if (replacedPtyId) {
       replaceFitOverridePtyId(replacedPtyId, remotePtyId)
       replaceDriverPtyId(replacedPtyId, remotePtyId)
-      onPtyRebind?.(remotePtyId, replacedPtyId)
+      if (nextIncarnationId) {
+        onPtyRebind?.(remotePtyId, replacedPtyId, nextIncarnationId)
+      } else {
+        onPtyRebind?.(remotePtyId, replacedPtyId)
+      }
     }
   }
 
@@ -1731,7 +1759,8 @@ export function createRemoteRuntimePtyTransport(
         return
       }
       if (resolved.handle !== previousHandle) {
-        rebindRemoteTerminalHandle(resolved.handle)
+        adoptExecutionMetadata(resolved)
+        rebindRemoteTerminalHandle(resolved.handle, resolved.incarnationId ?? null)
       }
       clearPublishedHandleWait()
       await subscribeToHandle(
@@ -2289,6 +2318,9 @@ export function createRemoteRuntimePtyTransport(
         return {
           id: remotePtyId,
           replay: '',
+          ...(authoritativePtyIncarnationId
+            ? { incarnationId: authoritativePtyIncarnationId }
+            : {}),
           ...(createdTerminal.isReattach === true ? { isReattach: true } : {})
         } satisfies PtyConnectResult
       } catch (error) {

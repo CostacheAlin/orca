@@ -809,5 +809,18 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         current.dispose()
       }
     )
+
+    it('forwards the optional incarnation fence to a current daemon', async () => {
+      const request = vi.fn(async () => ({ foregroundProcess: null, hasChildProcesses: false }))
+      const current = createInspectionAdapter(PROTOCOL_VERSION, request)
+
+      await current.inspectProcess('sess-a', { expectedIncarnationId: 'incarnation-a' })
+
+      expect(request).toHaveBeenCalledWith('inspectProcess', {
+        sessionId: 'sess-a',
+        expectedIncarnationId: 'incarnation-a'
+      })
+      current.dispose()
+    })
   })
 })

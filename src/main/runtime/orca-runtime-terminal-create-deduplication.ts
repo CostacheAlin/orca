@@ -107,7 +107,7 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
 
   protected getPtyExecutionHostMetadata(
     ptyId: string | null
-  ): Pick<RuntimeTerminalCreate, 'executionHostId' | 'hostPlatform'> {
+  ): Pick<RuntimeTerminalCreate, 'executionHostId' | 'hostPlatform' | 'incarnationId'> {
     if (!ptyId) {
       return {}
     }
@@ -119,11 +119,13 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
       const remotePlatform = getRegisteredSshState(pty.connectionId)?.remotePlatform
       return {
         executionHostId: toSshExecutionHostId(pty.connectionId),
+        ...(pty.incarnationId ? { incarnationId: pty.incarnationId } : {}),
         ...(remotePlatform ? { hostPlatform: remotePlatform } : {})
       }
     }
     return {
       executionHostId: LOCAL_EXECUTION_HOST_ID,
+      ...(pty.incarnationId ? { incarnationId: pty.incarnationId } : {}),
       hostPlatform: pty.isWsl || pty.wslDistro ? 'linux' : process.platform
     }
   }
