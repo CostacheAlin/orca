@@ -66,4 +66,20 @@ describe('remote foreground evidence contract', () => {
       )
     ).toBeNull()
   })
+
+  it('rejects delayed observations from a previously accepted host generation', () => {
+    const knownAuthorityGenerations = new Set(['host-a', 'host-b'])
+    const admission = {
+      expectedPtyId: 'pty-1',
+      expectedIncarnationId: 'inc-1',
+      requestStartedAtMonotonic: 100,
+      receivedAtMonotonic: 110,
+      lastAuthorityGeneration: 'host-b',
+      lastObservationEpoch: 1,
+      knownAuthorityGenerations
+    }
+    expect(
+      admitRemoteForegroundEvidence({ ...live, authorityGeneration: 'host-a' }, admission)
+    ).toBeNull()
+  })
 })

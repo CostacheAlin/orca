@@ -17,6 +17,7 @@ export function createPaneForegroundProcessReader(deps: {
   let authorityGeneration: string | null = null
   let observationEpoch = -1
   let bindingKey: string | null = null
+  const knownAuthorityGenerations = new Set<string>()
 
   return async (ptyId: string, requiresConfirmation: boolean) => {
     let processName: string | null = null
@@ -32,6 +33,7 @@ export function createPaneForegroundProcessReader(deps: {
         bindingKey = nextBindingKey
         authorityGeneration = null
         observationEpoch = -1
+        knownAuthorityGenerations.clear()
       }
     }
     try {
@@ -50,11 +52,13 @@ export function createPaneForegroundProcessReader(deps: {
           requestStartedAtMonotonic,
           receivedAtMonotonic: performance.now(),
           lastAuthorityGeneration: authorityGeneration,
-          lastObservationEpoch: observationEpoch
+          lastObservationEpoch: observationEpoch,
+          knownAuthorityGenerations
         })
         if (admitted) {
           authorityGeneration = admitted.authorityGeneration
           observationEpoch = admitted.observationEpoch
+          knownAuthorityGenerations.add(admitted.authorityGeneration)
         }
         if (admitted?.verdict === 'live') {
           processName = admitted.processName

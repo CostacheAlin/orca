@@ -13,6 +13,8 @@ export type RemoteForegroundEvidenceAdmission = {
   receivedAtMonotonic: number
   lastAuthorityGeneration: string | null
   lastObservationEpoch: number
+  /** Generations already accepted for this PTY binding; rejects delayed old-host replies. */
+  knownAuthorityGenerations?: ReadonlySet<string>
 }
 
 /**
@@ -39,6 +41,12 @@ export function admitRemoteForegroundEvidence(
     admission.receivedAtMonotonic - admission.requestStartedAtMonotonic
   )
   if (value.capturedAgeMs + receiveDelay > REMOTE_FOREGROUND_EVIDENCE_MAX_AGE_MS) {
+    return null
+  }
+  if (
+    admission.knownAuthorityGenerations?.has(value.authorityGeneration) &&
+    admission.lastAuthorityGeneration !== value.authorityGeneration
+  ) {
     return null
   }
   if (

@@ -22,6 +22,7 @@ import { createOrAttachTerminalSession } from './terminal-host-session-create'
 import { TerminalAttachCanceledError } from './daemon-errors'
 import { rejectOnAbort } from './terminal-attach-cancellation'
 import { randomUUID } from 'node:crypto'
+import { pruneRetiredPtyIncarnations } from '../../shared/retired-pty-incarnations'
 import {
   inspectTerminalHostProcess,
   type TerminalHostProcessInspection
@@ -125,6 +126,7 @@ export class TerminalHost {
             onSessionExit: (sessionId, generation) => {
               const session = this.sessions.get(sessionId)
               if (session) {
+                pruneRetiredPtyIncarnations(this.retiredIncarnations)
                 this.retiredIncarnations.set(sessionId, {
                   incarnationId: session.incarnationId,
                   code: session.exitCode ?? 0,
@@ -233,6 +235,7 @@ export class TerminalHost {
     sessionId: string,
     options?: { expectedIncarnationId?: string }
   ): Promise<TerminalHostProcessInspection> {
+    pruneRetiredPtyIncarnations(this.retiredIncarnations)
     const session = this.sessions.get(sessionId)
     if (
       (!session || !session.isAlive) &&

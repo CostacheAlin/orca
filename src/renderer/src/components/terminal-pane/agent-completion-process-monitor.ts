@@ -22,9 +22,10 @@ export function createAgentCompletionProcessMonitor({
   hasPendingCodexAttention,
   dispatchCompletion
 }: ProcessMonitorOptions) {
-  let remoteAuthorityGeneration: string | null = null
-  let remoteObservationEpoch = -1
+  let remoteAuthorityGeneration: string | null = null,
+    remoteObservationEpoch = -1
   let remoteBindingKey: string | null = null
+  const remoteKnownAuthorityGenerations = new Set<string>()
 
   const expectedRemotePtyId = (ptyId: string): string =>
     parseAppSshPtyId(ptyId)?.relayPtyId ?? getRemoteRuntimeTerminalHandle(ptyId) ?? ptyId
@@ -40,8 +41,8 @@ export function createAgentCompletionProcessMonitor({
     remoteBindingKey = bindingKey
     remoteAuthorityGeneration = null
     remoteObservationEpoch = -1
-    // A same-id replacement must invalidate a completion read already queued
-    // for the predecessor before the successor can be sampled.
+    remoteKnownAuthorityGenerations.clear()
+    // Invalidate reads queued for a prior same-id incarnation.
     state.inspectionGeneration += 1
   }
   const { clearPollTimer, scheduleNextPoll, shouldRunCadenceInspection } =
@@ -99,6 +100,7 @@ export function createAgentCompletionProcessMonitor({
         remoteBindingKey = bindingKey
         remoteAuthorityGeneration = null
         remoteObservationEpoch = -1
+        remoteKnownAuthorityGenerations.clear()
       }
       const admitted = admitRemoteForegroundEvidence(evidence, {
         expectedPtyId: ptyId ? expectedRemotePtyId(ptyId) : '',
@@ -106,7 +108,8 @@ export function createAgentCompletionProcessMonitor({
         requestStartedAtMonotonic,
         receivedAtMonotonic: performance.now(),
         lastAuthorityGeneration: remoteAuthorityGeneration,
-        lastObservationEpoch: remoteObservationEpoch
+        lastObservationEpoch: remoteObservationEpoch,
+        knownAuthorityGenerations: remoteKnownAuthorityGenerations
       })
       if (!admitted) {
         state.pendingProcessExitAgent = null
@@ -115,6 +118,7 @@ export function createAgentCompletionProcessMonitor({
       }
       remoteAuthorityGeneration = admitted.authorityGeneration
       remoteObservationEpoch = admitted.observationEpoch
+      remoteKnownAuthorityGenerations.add(admitted.authorityGeneration)
       if (admitted.verdict === 'exited') {
         const exited = state.lastForegroundAgent
         if (exited && state.hasAgentRunEvidence) {
