@@ -6,8 +6,13 @@ import { selectActiveTerminalPaneKey } from '@/store/active-terminal-pane-key'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
 import { computeTokensPerSecond } from '../../../../shared/agent-throughput-types'
+import { TUI_AGENT_DISPLAY_NAMES } from '../../../../shared/tui-agent-display-names'
 import { formatTokens } from '../stats/usage-formatters'
 import { formatGenerationDuration, formatTokensPerSecondValue } from './agent-throughput-format'
+
+function getAgentDisplayName(agentType: string): string {
+  return (TUI_AGENT_DISPLAY_NAMES as Record<string, string | undefined>)[agentType] ?? agentType
+}
 
 /** tok/s of the focused pane's agent; a sample only changes when an assistant message completes. */
 export function AgentThroughputStatusSegment({
@@ -75,7 +80,9 @@ export function AgentThroughputStatusSegment({
               )}
             </div>
           ) : null}
-          {sample.model ? <div className="text-muted-foreground">{sample.model}</div> : null}
+          <div className="text-muted-foreground">
+            {[getAgentDisplayName(sample.agentType), sample.model].filter(Boolean).join(' · ')}
+          </div>
           <div className="text-muted-foreground">
             {translate(
               'auto.components.status.bar.AgentThroughputStatusSegment.updatesHint',

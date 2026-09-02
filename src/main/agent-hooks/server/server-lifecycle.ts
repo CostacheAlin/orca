@@ -116,14 +116,13 @@ export abstract class AgentHookServerLifecycle extends AgentHookServerRuntimeEnv
           const enriched = this.applyNormalizedStatus(event, normalized.onAccepted)
           this.scheduleAssistantMessageRetry(source, aliasedBody, enriched)
           this.scheduleCodexSubagentPoll(source, aliasedBody, enriched)
-          if (source === 'claude') {
-            // Why: local loopback only — the transcript this reads lives on the execution host.
-            agentThroughputTracker.observeClaudeHook({
-              paneKey: event.paneKey,
-              hookEventName: event.hookEventName,
-              body: aliasedBody
-            })
-          }
+          // Why: local loopback only — the session record this reads lives on the execution host.
+          void agentThroughputTracker.observeHook({
+            source,
+            paneKey: event.paneKey,
+            hookEventName: event.hookEventName,
+            body: aliasedBody
+          })
         }
         res.writeHead(204)
         res.end()

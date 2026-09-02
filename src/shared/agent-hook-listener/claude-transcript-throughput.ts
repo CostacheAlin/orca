@@ -1,3 +1,4 @@
+import type { AgentMessageThroughput } from '../agent-throughput-types'
 import { parseAgentHookJson } from './request-body'
 import { readLastExtractedFromTranscriptOnce } from './transcript-reader'
 
@@ -12,13 +13,7 @@ export type ClaudeTranscriptThroughputRow = {
   outputTokens: number
 }
 
-export type ClaudeMessageThroughput = {
-  messageId: string
-  model: string | null
-  outputTokens: number
-  generationMs: number
-  completedAt: number
-}
+export type ClaudeMessageThroughput = AgentMessageThroughput
 
 // Why: the parent row can sit behind unrelated rows (attachments, hook progress); bound the walk so
 // a broken chain falls back to the nearest earlier row instead of scanning to the file start.

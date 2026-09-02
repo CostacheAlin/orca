@@ -1,16 +1,30 @@
-import {
-  readLastClaudeMessageThroughput,
-  type ClaudeMessageThroughput
-} from '../../shared/agent-hook-listener/claude-transcript-throughput'
-import { parseAgentHookJson } from '../../shared/agent-hook-listener/request-body'
+import type { AgentHookSource } from '../../shared/agent-hook-relay'
+import { readLastClaudeMessageThroughput } from '../../shared/agent-hook-listener/claude-transcript-throughput'
+import { readLastCodexMessageThroughput } from '../../shared/agent-hook-listener/codex-transcript-throughput'
+import { readLastGeminiMessageThroughput } from '../../shared/agent-hook-listener/gemini-chat-throughput'
+import { parseHookBodyPayloadRecord } from '../../shared/agent-hook-listener/grok-result-discovery'
+import { readFirstString } from '../../shared/agent-hook-listener/interactive-tool'
 import {
   computeTokensPerSecond,
+  type AgentMessageThroughput,
   type AgentThroughputSample
 } from '../../shared/agent-throughput-types'
+import { readLastOpenCodeMessageThroughput } from '../opencode/opencode-message-throughput'
 
-// Why: each fires once an assistant message is complete; the post-tool events double as a retry for
-// a transcript row that was still unflushed when PreToolUse arrived.
-const CLAUDE_MESSAGE_COMPLETE_EVENTS: ReadonlySet<string> = new Set([
+export type ThroughputHookAction = 'reset' | 'new-turn' | 'measure' | 'measure-streaming' | 'ignore'
+
+export type AgentThroughputSourceProfile = {
+  classify: (hookEventName: string, payload: Record<string, unknown>) => ThroughputHookAction
+  read: (
+    payload: Record<string, unknown>
+  ) => AgentMessageThroughput | undefined | Promise<AgentMessageThroughput | undefined>
+  /** Floor between `measure-streaming` reads; those events fire while a message is still streaming. */
+  streamingReadIntervalMs?: number
+}
+
+// Why: each fires once a message is complete; the post-tool events double as a retry for a
+// transcript row that was still unflushed when the pre-tool event arrived.
+const CLAUDE_STYLE_COMPLETE_EVENTS: ReadonlySet<string> = new Set([
   'PreToolUse',
   'PostToolUse',
   'PostToolUseFailure',
@@ -20,6 +34,89 @@ const CLAUDE_MESSAGE_COMPLETE_EVENTS: ReadonlySet<string> = new Set([
   'SubagentStop',
   'PostCompact'
 ])
+const GEMINI_COMPLETE_EVENTS: ReadonlySet<string> = new Set([
+  'BeforeTool',
+  'AfterTool',
+  'AfterAgent'
+])
+const OPENCODE_COMPLETE_EVENTS: ReadonlySet<string> = new Set([
+  'SessionIdle',
+  'PermissionRequest',
+  'AskUserQuestion'
+])
+const OPENCODE_STREAMING_READ_INTERVAL_MS = 1_500
+
+function classifyClaudeStyleHook(hookEventName: string): ThroughputHookAction {
+  if (hookEventName === 'SessionStart') {
+    return 'reset'
+  }
+  if (hookEventName === 'UserPromptSubmit') {
+    return 'new-turn'
+  }
+  return CLAUDE_STYLE_COMPLETE_EVENTS.has(hookEventName) ? 'measure' : 'ignore'
+}
+
+function readTranscriptPath(payload: Record<string, unknown>): string | null {
+  return readFirstString(payload, ['transcript_path', 'transcriptPath']) ?? null
+}
+
+function readWithTranscript(
+  read: (transcriptPath: string) => AgentMessageThroughput | undefined
+): AgentThroughputSourceProfile['read'] {
+  return (payload) => {
+    const transcriptPath = readTranscriptPath(payload)
+    return transcriptPath ? read(transcriptPath) : undefined
+  }
+}
+
+const OPENCODE_PROFILE: AgentThroughputSourceProfile = {
+  classify: (hookEventName, payload) => {
+    if (hookEventName === 'SessionStart') {
+      return 'reset'
+    }
+    if (hookEventName === 'MessagePart') {
+      return payload.role === 'user'
+        ? 'new-turn'
+        : payload.role === 'assistant'
+          ? 'measure-streaming'
+          : 'ignore'
+    }
+    return OPENCODE_COMPLETE_EVENTS.has(hookEventName) ? 'measure' : 'ignore'
+  },
+  read: (payload) => {
+    const sessionId = readFirstString(payload, ['sessionID', 'sessionId', 'session_id'])
+    return sessionId ? readLastOpenCodeMessageThroughput(sessionId) : undefined
+  },
+  streamingReadIntervalMs: OPENCODE_STREAMING_READ_INTERVAL_MS
+}
+
+/** Sources with a per-message token record Orca can reach; the rest expose no token counts. */
+export const AGENT_THROUGHPUT_SOURCE_PROFILES: Partial<
+  Record<AgentHookSource, AgentThroughputSourceProfile>
+> = {
+  claude: {
+    classify: classifyClaudeStyleHook,
+    read: readWithTranscript(readLastClaudeMessageThroughput)
+  },
+  codex: {
+    classify: classifyClaudeStyleHook,
+    read: readWithTranscript(readLastCodexMessageThroughput)
+  },
+  gemini: {
+    classify: (hookEventName) => {
+      if (hookEventName === 'SessionStart') {
+        return 'reset'
+      }
+      if (hookEventName === 'BeforeAgent') {
+        return 'new-turn'
+      }
+      return GEMINI_COMPLETE_EVENTS.has(hookEventName) ? 'measure' : 'ignore'
+    },
+    read: readWithTranscript(readLastGeminiMessageThroughput)
+  },
+  opencode: OPENCODE_PROFILE,
+  'mimo-code': OPENCODE_PROFILE
+}
 
 type PaneThroughputState = {
   lastMessageId: string | null
@@ -27,6 +124,9 @@ type PaneThroughputState = {
   turnGenerationMs: number
   turnMessageCount: number
   sample: AgentThroughputSample | null
+  /** Clock of the last record read; null until the first one so a young clock is not throttled. */
+  lastReadAt: number | null
+  readSequence: number
 }
 
 export type AgentThroughputListener = (sample: AgentThroughputSample) => void
@@ -34,28 +134,7 @@ export type AgentThroughputClearListener = (paneKey: string) => void
 
 type AgentThroughputTrackerDependencies = {
   now?: () => number
-  readTranscript?: (transcriptPath: string) => ClaudeMessageThroughput | undefined
-}
-
-/** `transcript_path` from a Claude hook envelope; the payload arrives as JSON text or an object. */
-export function readClaudeHookTranscriptPath(body: unknown): string | null {
-  if (typeof body !== 'object' || body === null) {
-    return null
-  }
-  const rawPayload = (body as Record<string, unknown>).payload
-  let payload: unknown = rawPayload
-  if (typeof rawPayload === 'string') {
-    try {
-      payload = parseAgentHookJson(rawPayload)
-    } catch {
-      return null
-    }
-  }
-  if (typeof payload !== 'object' || payload === null) {
-    return null
-  }
-  const transcriptPath = (payload as Record<string, unknown>).transcript_path
-  return typeof transcriptPath === 'string' && transcriptPath.length > 0 ? transcriptPath : null
+  profiles?: Partial<Record<AgentHookSource, AgentThroughputSourceProfile>>
 }
 
 function createPaneState(): PaneThroughputState {
@@ -64,24 +143,26 @@ function createPaneState(): PaneThroughputState {
     turnOutputTokens: 0,
     turnGenerationMs: 0,
     turnMessageCount: 0,
-    sample: null
+    sample: null,
+    lastReadAt: null,
+    readSequence: 0
   }
 }
 
 /**
- * Per-pane generation throughput derived from Claude Code transcripts on the local hook path.
- * Remote panes (relay/SSH ingest) produce no samples: their transcripts live on the execution host.
+ * Per-pane generation throughput derived from each agent's own session record on the local hook
+ * path. Remote panes (relay/SSH ingest) produce no samples: their records live on the execution host.
  */
 export class AgentThroughputTracker {
   private readonly panes = new Map<string, PaneThroughputState>()
   private listener: AgentThroughputListener | null = null
   private clearListener: AgentThroughputClearListener | null = null
   private readonly now: () => number
-  private readonly readTranscript: (transcriptPath: string) => ClaudeMessageThroughput | undefined
+  private readonly profiles: Partial<Record<AgentHookSource, AgentThroughputSourceProfile>>
 
   constructor(dependencies: AgentThroughputTrackerDependencies = {}) {
     this.now = dependencies.now ?? Date.now
-    this.readTranscript = dependencies.readTranscript ?? readLastClaudeMessageThroughput
+    this.profiles = dependencies.profiles ?? AGENT_THROUGHPUT_SOURCE_PROFILES
   }
 
   setListener(listener: AgentThroughputListener | null): void {
@@ -102,36 +183,55 @@ export class AgentThroughputTracker {
     return samples
   }
 
-  observeClaudeHook(args: {
+  async observeHook(args: {
+    source: AgentHookSource
     paneKey: string
     hookEventName: string | undefined
     body: unknown
-  }): void {
-    const { paneKey, hookEventName } = args
-    if (!hookEventName) {
+  }): Promise<void> {
+    const { source, paneKey, hookEventName } = args
+    const profile = this.profiles[source]
+    if (!profile || !hookEventName) {
       return
     }
-    if (hookEventName === 'SessionStart') {
+    const payload = parseHookBodyPayloadRecord(args.body) ?? {}
+    const action = profile.classify(hookEventName, payload)
+    if (action === 'reset') {
       this.clear(paneKey)
       return
     }
-    if (hookEventName === 'UserPromptSubmit') {
+    if (action === 'new-turn') {
       this.startTurn(paneKey)
       return
     }
-    // Why: with nothing listening (headless serve, window closed) skip the transcript read entirely.
-    if (!this.listener || !CLAUDE_MESSAGE_COMPLETE_EVENTS.has(hookEventName)) {
-      return
-    }
-    const transcriptPath = readClaudeHookTranscriptPath(args.body)
-    if (!transcriptPath) {
-      return
-    }
-    const message = this.readTranscript(transcriptPath)
-    if (!message) {
+    // Why: with nothing listening (headless serve, window closed) skip the record read entirely.
+    if (action === 'ignore' || !this.listener) {
       return
     }
     const pane = this.panes.get(paneKey) ?? createPaneState()
+    this.panes.set(paneKey, pane)
+    const now = this.now()
+    if (
+      action === 'measure-streaming' &&
+      profile.streamingReadIntervalMs !== undefined &&
+      pane.lastReadAt !== null &&
+      now - pane.lastReadAt < profile.streamingReadIntervalMs
+    ) {
+      return
+    }
+    pane.lastReadAt = now
+    const readSequence = ++pane.readSequence
+    let message: AgentMessageThroughput | undefined
+    try {
+      message = await profile.read(payload)
+    } catch (err) {
+      console.error('[agent-hooks] throughput read failed', err)
+      return
+    }
+    // Why: a slower read must not overwrite a newer one, and a cleared pane must stay cleared.
+    if (!message || this.panes.get(paneKey) !== pane || pane.readSequence !== readSequence) {
+      return
+    }
     if (pane.lastMessageId === message.messageId) {
       return
     }
@@ -141,8 +241,9 @@ export class AgentThroughputTracker {
     pane.turnMessageCount += 1
     pane.sample = {
       paneKey,
+      agentType: source,
       messageId: message.messageId,
-      model: message.model,
+      model: message.model ?? readFirstString(payload, ['model']) ?? null,
       outputTokens: message.outputTokens,
       generationMs: message.generationMs,
       tokensPerSecond: computeTokensPerSecond(message.outputTokens, message.generationMs),
@@ -152,7 +253,6 @@ export class AgentThroughputTracker {
       turnMessageCount: pane.turnMessageCount,
       observedAt: this.now()
     }
-    this.panes.set(paneKey, pane)
     this.emit(pane.sample)
   }
 

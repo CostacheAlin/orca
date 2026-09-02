@@ -1,11 +1,13 @@
 /**
- * Generation throughput of one pane's agent, measured per completed assistant
- * message from the provider transcript. Claude Code writes token usage and a
- * timestamp per message; no provider surface exposes intra-message counts, so a
- * sample only changes when a message completes.
+ * Generation throughput of one pane's agent, measured per completed model call
+ * from the agent's own session record (Claude/Codex transcripts, Gemini chat
+ * files, OpenCode's database). No agent exposes intra-message counts, so a
+ * sample only changes when a call completes.
  */
 export type AgentThroughputSample = {
   paneKey: string
+  /** Hook source the record was read for (claude, codex, gemini, opencode, ...). */
+  agentType: string
   /** Provider-owned assistant message id the sample was measured on. */
   messageId: string
   model: string | null
@@ -24,6 +26,16 @@ export type AgentThroughputSample = {
 }
 
 export type AgentThroughputClearIpcPayload = { paneKey: string }
+
+/** One completed model call as read from a provider's on-disk session record. */
+export type AgentMessageThroughput = {
+  /** Provider-owned id when the record has one, else a synthetic key unique per call. */
+  messageId: string
+  model: string | null
+  outputTokens: number
+  generationMs: number
+  completedAt: number
+}
 
 export function computeTokensPerSecond(outputTokens: number, generationMs: number): number {
   if (!(outputTokens > 0) || !(generationMs > 0)) {
