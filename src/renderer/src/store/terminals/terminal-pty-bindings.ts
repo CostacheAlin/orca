@@ -9,6 +9,7 @@ import {
   isRemoteRuntimePtyId
 } from './terminal-pty-identities'
 import { omitUnverifiedPtyLossTabIds } from './terminal-unverified-pty-loss'
+import { omitHostAttestedAbsentPtyIds } from './terminal-host-attested-pty-absence'
 
 export function createTerminalPtyBindingActions(
   set: TerminalStoreSet,
@@ -140,6 +141,12 @@ export function createTerminalPtyBindingActions(
         const nextUnverifiedPtyLossTabIds = s.unverifiedPtyLossTabIds[tabId]
           ? omitUnverifiedPtyLossTabIds(s.unverifiedPtyLossTabIds, [tabId])
           : s.unverifiedPtyLossTabIds
+        // Why: a redeployed relay renumbers from pty-1, so a recorded absence must not outlive the
+        // id it described once a live PTY answers to that id again.
+        const nextHostAttestedAbsentPtyIds = omitHostAttestedAbsentPtyIds(
+          s.hostAttestedAbsentPtyIds,
+          replacementPtyId ? [ptyId, replacementPtyId] : [ptyId]
+        )
         const hasReplacementPendingRestart = replacementPtyId
           ? replacementPtyId in s.pendingCodexPaneRestartIds
           : false
@@ -252,6 +259,9 @@ export function createTerminalPtyBindingActions(
           },
           ...(nextUnverifiedPtyLossTabIds !== s.unverifiedPtyLossTabIds
             ? { unverifiedPtyLossTabIds: nextUnverifiedPtyLossTabIds }
+            : {}),
+          ...(nextHostAttestedAbsentPtyIds !== s.hostAttestedAbsentPtyIds
+            ? { hostAttestedAbsentPtyIds: nextHostAttestedAbsentPtyIds }
             : {}),
           suppressedPtyExitIds: nextSuppressedPtyExitIds,
           pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds,

@@ -2902,7 +2902,12 @@ export class SshRelaySession {
     this.store.markSshRemotePtyLease(this.targetId, ptyId, 'expired')
     const win = this.getMainWindow()
     if (win && !win.isDestroyed()) {
-      win.webContents.send('pty:exit', { id: appPtyId, code: -1 })
+      // Why the verdict and not the code: `-1` is the stop sentinel every reader resolves to
+      // `stop_unverified`, so this branch — the one place a reachable relay answered for this exact
+      // id and reported it absent — was indistinguishable from a lost link. The two branches above
+      // send no exit at all, so `exited` is only ever claimed on host evidence
+      // (docs/reference/ssh-execution-boundary.md).
+      win.webContents.send('pty:exit', { id: appPtyId, code: -1, livenessVerdict: 'exited' })
     }
   }
 

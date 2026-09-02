@@ -1,4 +1,5 @@
 import { parseAppSshPtyId } from '../../../shared/ssh-pty-id'
+import { isPtyBindingStillAddressable } from '../store/terminals/terminal-host-attested-pty-absence'
 
 // Why: on SSH (re)connect, panes that never got a live PTY must remount and
 // retry. Two shapes qualify: tabs with no ptyId at all (their spawn failed
@@ -19,9 +20,12 @@ import { parseAppSshPtyId } from '../../../shared/ssh-pty-id'
 // `claude --resume` on one transcript for an agent pane
 // (docs/reference/ssh-execution-boundary.md).
 //
-// These are still client-side maps. The host's own session list outranks them,
-// but it is not in scope here: this runs as a pure reducer over renderer store
-// state. Where the host did answer, its ids are already in these maps.
+// These are still client-side maps, so on their own they can only say `unverifiable`. The host's
+// answer outranks them and arrives separately: main records `hostAttestedAbsentPtyIds` for the ids
+// a reachable relay reported absent, which is the one `exited` strong enough to license a respawn
+// (docs/reference/ssh-execution-boundary.md). Reading the maps alone refused the respawn a killed
+// relay requires, because a dead generation's ids survive in them and nothing here could tell that
+// the host had already disowned them.
 export function shouldRetryPaneSpawnOnSshReconnect(args: {
   targetId: string
   tabPtyId: string | null | undefined
@@ -29,15 +33,19 @@ export function shouldRetryPaneSpawnOnSshReconnect(args: {
   tabPtyIds?: readonly (string | null | undefined)[] | undefined
   /** `terminalLayoutsByTabId[tabId].ptyIdsByLeafId` values — the per-pane record. */
   leafPtyIds?: readonly (string | null | undefined)[] | undefined
+  /** `hostAttestedAbsentPtyIds` — ids the relay itself answered absent for. */
+  hostAttestedAbsentPtyIds?: Readonly<Record<string, true>> | undefined
   deferredSessionId: string | undefined
 }): boolean {
-  // Any recorded id counts, including one naming another target: that tab is bound to some host's
-  // PTY, and an id this reconnect cannot reattach is unverifiable, not absent — never this
-  // target's to respawn.
+  // Any recorded id the host has not disowned counts, including one naming another target: that tab
+  // is bound to some host's PTY, and an id this reconnect merely cannot reattach is unverifiable,
+  // not absent — never this target's to respawn.
+  const isAddressable = (ptyId: string | null | undefined): boolean =>
+    isPtyBindingStillAddressable(ptyId, args.hostAttestedAbsentPtyIds)
   const hasBoundPty =
-    Boolean(args.tabPtyId) ||
-    (args.tabPtyIds?.some(Boolean) ?? false) ||
-    (args.leafPtyIds?.some(Boolean) ?? false)
+    isAddressable(args.tabPtyId) ||
+    (args.tabPtyIds?.some(isAddressable) ?? false) ||
+    (args.leafPtyIds?.some(isAddressable) ?? false)
   if (!hasBoundPty) {
     return true
   }

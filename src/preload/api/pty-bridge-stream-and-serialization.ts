@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { PtyLivenessVerdict } from '../../shared/pty-liveness-verdict'
 import type { PtyModelRestoreNeededEvent } from '../../shared/pty-model-restore-marker'
 import type { TerminalSideEffectBatch } from '../../shared/terminal-side-effect-facts'
 import type { PreloadApi } from '../api-types'
@@ -69,6 +70,8 @@ export const ptyStreamAndSerializationApi = {
       preserveRendererBinding?: boolean
       /** Which lifetime of `id` died; absent when the execution host predates the field. */
       incarnationId?: string
+      /** Set only when the owning host attested the verdict; absent means it did not say. */
+      livenessVerdict?: PtyLivenessVerdict['status']
     }) => void
   ): (() => void) => {
     const listener = (
@@ -78,6 +81,7 @@ export const ptyStreamAndSerializationApi = {
         code: number
         preserveRendererBinding?: boolean
         incarnationId?: string
+        livenessVerdict?: PtyLivenessVerdict['status']
       }
     ) => callback(data)
     ipcRenderer.on('pty:exit', listener)

@@ -87,6 +87,66 @@ describe('shouldRetryPaneSpawnOnSshReconnect', () => {
     ).toBe(true)
   })
 
+  it('retries a hydrated tab whose recorded PTY the relay itself answered absent for', () => {
+    // The relay-restart shape: a SIGKILLed relay comes back renumbering from a new mint epoch, so
+    // the leaf map still names `pty2:<dead-epoch>:1` while the new relay answers that it has no
+    // such id. That answer is positive host evidence of absence, which is the one case where
+    // replacing the pane is correct (docs/reference/ssh-execution-boundary.md).
+    expect(
+      shouldRetryPaneSpawnOnSshReconnect({
+        targetId: 'conn-1',
+        tabPtyId: null,
+        tabPtyIds: ['ssh:conn-1@@pty2:dead-epoch:1'],
+        leafPtyIds: ['ssh:conn-1@@pty2:dead-epoch:1'],
+        hostAttestedAbsentPtyIds: { 'ssh:conn-1@@pty2:dead-epoch:1': true },
+        deferredSessionId: undefined
+      })
+    ).toBe(true)
+  })
+
+  it('leaves the same tab alone while the host has said nothing about that id', () => {
+    // The transport-drop shape, byte-for-byte identical in the client's own maps. Only the host's
+    // answer separates it from the case above; without one the verdict is `unverifiable`.
+    expect(
+      shouldRetryPaneSpawnOnSshReconnect({
+        targetId: 'conn-1',
+        tabPtyId: null,
+        tabPtyIds: ['ssh:conn-1@@pty2:dead-epoch:1'],
+        leafPtyIds: ['ssh:conn-1@@pty2:dead-epoch:1'],
+        hostAttestedAbsentPtyIds: {},
+        deferredSessionId: undefined
+      })
+    ).toBe(false)
+  })
+
+  it('leaves a split tab alone when only one of its leaves was proven absent', () => {
+    // A surviving sibling is still bound to a host PTY, so the tab is not this reconnect's to
+    // respawn — a generation bump would cold-start over the live one.
+    expect(
+      shouldRetryPaneSpawnOnSshReconnect({
+        targetId: 'conn-1',
+        tabPtyId: null,
+        tabPtyIds: ['ssh:conn-1@@pty-4', 'ssh:conn-1@@pty-5'],
+        leafPtyIds: ['ssh:conn-1@@pty-4', 'ssh:conn-1@@pty-5'],
+        hostAttestedAbsentPtyIds: { 'ssh:conn-1@@pty-4': true },
+        deferredSessionId: undefined
+      })
+    ).toBe(false)
+  })
+
+  it('ignores an absence record naming an id this tab does not hold', () => {
+    expect(
+      shouldRetryPaneSpawnOnSshReconnect({
+        targetId: 'conn-1',
+        tabPtyId: null,
+        tabPtyIds: undefined,
+        leafPtyIds: ['ssh:conn-1@@pty-9'],
+        hostAttestedAbsentPtyIds: { 'ssh:conn-1@@pty-8': true },
+        deferredSessionId: undefined
+      })
+    ).toBe(false)
+  })
+
   it('still retries a stranded tab whose only records are empty slots', () => {
     expect(
       shouldRetryPaneSpawnOnSshReconnect({
