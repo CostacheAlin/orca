@@ -5,7 +5,13 @@ import { translate } from '@/i18n/i18n'
 
 export function AutomationsPageBreadcrumb({ onBack }: { onBack: () => void }): React.JSX.Element {
   return (
-    <nav aria-label="Automations breadcrumb" className="flex min-w-0 items-center text-sm">
+    <nav
+      aria-label={translate(
+        'auto.components.automations.AutomationsPageBreadcrumb.ariaLabel',
+        'Automations breadcrumb'
+      )}
+      className="flex min-w-0 items-center text-sm"
+    >
       <Button
         type="button"
         variant="link"

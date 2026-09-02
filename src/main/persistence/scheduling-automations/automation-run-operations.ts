@@ -5,6 +5,7 @@ import type {
   Automation,
   AutomationDispatchResult,
   AutomationRun,
+  AutomationRunsPage,
   AutomationRunTrigger
 } from '../../../shared/automations-types'
 import type { PersistedState } from '../../../shared/persisted-state-types'
@@ -12,6 +13,7 @@ import {
   nextAutomationRunNumber,
   pruneAutomationRuns
 } from '../../../shared/automation-run-retention'
+import { paginateAutomationRuns } from '../../../shared/automation-run-cursor'
 import {
   normalizeAutomationPrecheckResult,
   normalizeAutomationRunOutputSnapshot,
@@ -55,13 +57,8 @@ export function listAutomationRunsPage(
   automationId: string | undefined,
   limit = 100,
   cursor?: string
-): { runs: AutomationRun[]; nextCursor: string | null } {
-  const all = sortedAutomationRuns(state, automationId)
-  const start = cursor ? Math.max(0, Number.parseInt(cursor, 10) || 0) : 0
-  const boundedLimit = Math.min(Math.max(1, limit), 100)
-  const runs = all.slice(start, start + boundedLimit)
-  const next = start + runs.length < all.length ? String(start + runs.length) : null
-  return { runs, nextCursor: next }
+): AutomationRunsPage {
+  return paginateAutomationRuns(sortedAutomationRuns(state, automationId), limit, cursor)
 }
 
 export function createAutomationRun(

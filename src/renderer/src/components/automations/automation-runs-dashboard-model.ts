@@ -119,6 +119,10 @@ export function countAutomationRunOutcomes(
   const weekAgo = now - 7 * 24 * 60 * 60 * 1000
   const counts = { successful24h: 0, failed24h: 0, successful7d: 0, failed7d: 0 }
   for (const entry of entries) {
+    // A clock-skewed or future-dated run has not happened inside either window yet.
+    if (entry.run.scheduledFor > now) {
+      continue
+    }
     const successful = entry.run.status === 'completed'
     const failed = entry.run.status === 'dispatch_failed'
     if (entry.run.scheduledFor >= weekAgo) {

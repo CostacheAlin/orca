@@ -85,4 +85,21 @@ describe('automation runs dashboard model', () => {
     ).toEqual(['ssh'])
     expect(countAutomationRunOutcomes(entries, 30).successful7d).toBe(1)
   })
+
+  it('keeps future-dated runs out of the outcome windows', () => {
+    const entries = buildAutomationRunsDashboardEntries(
+      [local, ssh],
+      new Map([
+        [local.key, [run('ahead', local.automation.id, 40, 'completed')]],
+        [ssh.key, [run('ahead-failed', ssh.automation.id, 40, 'dispatch_failed')]]
+      ])
+    )
+
+    expect(countAutomationRunOutcomes(entries, 30)).toEqual({
+      successful24h: 0,
+      failed24h: 0,
+      successful7d: 0,
+      failed7d: 0
+    })
+  })
 })

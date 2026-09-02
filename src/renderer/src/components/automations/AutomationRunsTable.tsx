@@ -132,7 +132,11 @@ export function AutomationRunsTable({
                       {entry.run.trigger}
                     </div>
                     <div className="min-w-0 truncate text-xs" title={entry.row.hostLabel}>
-                      {entry.row.hostLabel || (entry.scope === 'local' ? 'Local' : 'Remote')}
+                      {entry.row.hostLabel ||
+                        translate(
+                          `auto.components.automations.AutomationRunsDashboard.${entry.scope}`,
+                          entry.scope === 'local' ? 'Local' : 'Remote'
+                        )}
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <Badge variant={getAutomationRunStatusVariant(entry.run.status)}>

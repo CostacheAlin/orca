@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AutomationRun } from '../../../../shared/automations-types'
 import type { AutomationAuthorityRef } from '../../../../shared/automation-owner-ref'
+import { ownerKey } from '../../../../shared/automation-owner-key'
 import { capturedAutomationOwner, capturedAutomationOwnerKey } from './automation-captured-owner'
-import { listAutomationRunsForTarget, type AutomationHostTarget } from './automation-host-client'
+import {
+  getAutomationHostTargetKey,
+  listAutomationRunsForTarget,
+  type AutomationHostTarget
+} from './automation-host-client'
 import type { AutomationListRow } from './automation-list-row-identity'
 import {
   dispatchAutomationRunHistoryPage,
@@ -54,6 +59,9 @@ export function useAutomationRunsDashboard({
 }): DashboardState {
   const inputRef = useRef({ rows, context, legacyTarget, authorityForRow })
   inputRef.current = { rows, context, legacyTarget, authorityForRow }
+  // Keys the effective request, not just the row: a re-pair bumps the authority's
+  // pairing revision and an uncaptured row's fallback target can move, and either
+  // makes the entries and cursors already on screen belong to a different host.
   const queryKey = useMemo(
     () =>
       rows
@@ -61,31 +69,42 @@ export function useAutomationRunsDashboard({
           [
             row.key,
             row.automation.updatedAt,
-            capturedAutomationOwnerKey(capturedAutomationOwner(context.capturedOwners, row.key))
+            capturedAutomationOwnerKey(capturedAutomationOwner(context.capturedOwners, row.key)),
+            ownerKey({ authority: authorityForRow(row), selector: { kind: 'self' } }),
+            getAutomationHostTargetKey(legacyTarget(row) ?? { kind: 'local' })
           ].join(':')
         )
         .join('|'),
-    [context.capturedOwners, rows]
+    [authorityForRow, context.capturedOwners, legacyTarget, rows]
   )
   const [state, setState] = useState<DashboardState>(EMPTY_STATE)
   const stateRef = useRef(state)
   stateRef.current = state
   const [loadMoreToken, setLoadMoreToken] = useState(0)
   const loadMore = useCallback(() => setLoadMoreToken((token) => token + 1), [])
-  const generationRef = useRef({ queryKey, reloadToken })
+  // Null while disabled: a fresh re-entry must never resume from the previous
+  // session's cursors, however many times load-more fired before it.
+  const generationRef = useRef<{
+    queryKey: string
+    reloadToken: number
+    loadMoreToken: number
+  } | null>(null)
 
   useEffect(() => {
     if (!enabled) {
+      generationRef.current = null
       return
     }
     const input = inputRef.current
     let cancelled = false
+    const previous = generationRef.current
     const loadingMore =
-      generationRef.current.queryKey === queryKey &&
-      generationRef.current.reloadToken === reloadToken &&
-      loadMoreToken > 0 &&
+      previous !== null &&
+      previous.queryKey === queryKey &&
+      previous.reloadToken === reloadToken &&
+      previous.loadMoreToken !== loadMoreToken &&
       stateRef.current.entries.length > 0
-    generationRef.current = { queryKey, reloadToken }
+    generationRef.current = { queryKey, reloadToken, loadMoreToken }
     const runsByRowKey = new Map<string, AutomationRun[]>()
     if (loadingMore) {
       for (const entry of stateRef.current.entries) {

@@ -15,7 +15,7 @@ import type {
   AutomationDestination
 } from '../../shared/automation-owner-precondition'
 import { runAutomationNowFenced } from '../automations/refused-manual-run'
-import { paginateAutomationRuns } from './automation-run-pagination'
+import { paginateAutomationRuns } from '../../shared/automation-run-cursor'
 import { hasRuntimeAutomationUpdateValue } from './runtime-automation-update-value'
 import { assertAutomationRunContextMatchesTarget } from './runtime-automation-run-context'
 
