@@ -15,6 +15,8 @@ describe('agent throughput formatting', () => {
     expect(formatGenerationDuration(4_210)).toBe('4.2s')
     expect(formatGenerationDuration(59_949)).toBe('59.9s')
     expect(formatGenerationDuration(125_000)).toBe('2m 05s')
+    expect(formatGenerationDuration(119_400)).toBe('1m 59s')
+    expect(formatGenerationDuration(119_999)).toBe('2m 00s')
     expect(formatGenerationDuration(-5)).toBe('0.0s')
   })
 })

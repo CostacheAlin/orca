@@ -18,7 +18,9 @@ export function formatGenerationDuration(generationMs: number): string {
   if (totalSeconds < 60) {
     return `${totalSeconds.toFixed(1)}s`
   }
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = Math.round(totalSeconds - minutes * 60)
+  // Why: round the whole value first so a carry rolls into the minutes instead of printing "1m 60s".
+  const rounded = Math.round(totalSeconds)
+  const minutes = Math.floor(rounded / 60)
+  const seconds = rounded % 60
   return `${minutes}m ${String(seconds).padStart(2, '0')}s`
 }

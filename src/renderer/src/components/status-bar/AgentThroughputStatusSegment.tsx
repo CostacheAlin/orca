@@ -62,6 +62,8 @@ function Readout({
   return (
     <span
       {...triggerProps}
+      // Why: a span is not focusable, so keyboard users could never open the tooltip.
+      tabIndex={0}
       className={cn(
         'inline-flex items-center gap-1 rounded px-1 py-0.5 tabular-nums',
         // Why: dim while idle so the last reading isn't mistaken for live generation.
@@ -92,7 +94,7 @@ export function AgentThroughputStatusSegment({
   const working = paneAgent?.state === 'working'
   const measuredFor = translate(
     'auto.components.status.bar.AgentThroughputStatusSegment.measuredFor',
-    'Measured for Claude Code, Codex, Gemini CLI, OpenCode. Estimated for Grok.'
+    'Measured for Claude Code, Codex, Gemini CLI, OpenCode, MiMo Code. Estimated for Grok.'
   )
   if (!sample) {
     // Why: an enabled item must always render, or "nothing" is indistinguishable from "off".

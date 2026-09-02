@@ -177,6 +177,9 @@ export class AgentThroughputTracker {
     if (!pane) {
       return
     }
+    // Why: a read still in flight belongs to the previous turn; it must not land in this one.
+    pane.readSequence += 1
+    pane.lastReadAt = null
     pane.turnOutputTokens = 0
     pane.turnGenerationMs = 0
     pane.turnMessageCount = 0

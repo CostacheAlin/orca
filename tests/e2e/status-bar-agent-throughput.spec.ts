@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { ElectronApplication, Locator, Page } from '@stablyai/playwright-test'
+import SyncDatabase from '../../src/main/sqlite/sync-database'
 import { grokEncodedCwdDirName } from '../../src/shared/grok-session-paths'
 import { expect, test } from './helpers/orca-app'
 import { readHookEndpoint } from './helpers/agent-hook-endpoint'
@@ -10,6 +11,8 @@ import { waitForActivePaneHookDescriptor } from './helpers/terminal'
 import type { ActivePaneHookDescriptor } from './helpers/terminal-pane-identity'
 
 const BASE = Date.parse('2026-09-02T14:12:22.409Z')
+// Why: the OpenCode reader locates opencode.db through XDG_DATA_HOME, which must be in the app's launch env.
+const OPENCODE_DATA_HOME = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-opencode-home-'))
 
 function at(offsetMs: number): string {
   return new Date(BASE + offsetMs).toISOString()
@@ -71,7 +74,7 @@ function codexTokenCount(offsetMs: number, outputTokens: number, totalOutput: nu
 
 async function postHook(
   app: ElectronApplication,
-  source: 'claude' | 'codex' | 'grok',
+  source: 'claude' | 'codex' | 'gemini' | 'opencode' | 'grok',
   descriptor: ActivePaneHookDescriptor,
   payload: Record<string, unknown>,
   envelope: Record<string, unknown> = {}
@@ -127,15 +130,22 @@ async function captureEvidence(
 
 // Why: the tooltip is the only place the message size, duration and agent show, so hover must
 // open it; the star nag can cover that corner, so dismiss it first.
-async function expectTooltip(page: Page, trigger: Locator, expectedText: string): Promise<void> {
+async function expectTooltip(
+  page: Page,
+  trigger: Locator,
+  expectedTexts: readonly string[],
+  evidenceName = 'after-tooltip'
+): Promise<void> {
   const later = page.getByRole('button', { name: 'Later' })
   if (await later.isVisible().catch(() => false)) {
     await later.click()
   }
   await trigger.hover()
-  // Why: Radix renders the content twice (visible popper + visually hidden a11y copy); the popper comes first.
-  await expect(page.getByText(expectedText).first()).toBeVisible()
-  await captureEvidence(page, 'after-tooltip', { stripHeight: 160 })
+  for (const expectedText of expectedTexts) {
+    // Why: Radix renders the content twice (visible popper + visually hidden a11y copy); the popper comes first.
+    await expect(page.getByText(expectedText).first()).toBeVisible()
+  }
+  await captureEvidence(page, evidenceName, { stripHeight: 160 })
   await page.mouse.move(0, 0)
 }
 
@@ -212,7 +222,11 @@ test('shows tokens per second for the focused pane once a Claude message complet
   await expect(firstReadout).toBeVisible()
   await expect(firstReadout).toHaveText('68 tok/s')
   await captureEvidence(orcaPage, 'after', { full: true })
-  await expectTooltip(orcaPage, firstReadout, 'Last request: 68 tok/s (2.5k tokens in 36.5s)')
+  await expectTooltip(orcaPage, firstReadout, [
+    'In the bar: 68 tok/s, this turn’s average over 1 message(s)',
+    'Last request: 68 tok/s (2.5k tokens in 36.5s)',
+    'Claude · claude-e2e'
+  ])
 
   lines.push(
     claudeRow(
@@ -238,6 +252,14 @@ test('shows tokens per second for the focused pane once a Claude message complet
     hook_event_name: 'UserPromptSubmit',
     prompt: 'again'
   })
+  // Why: a new turn must keep the previous reading until its first message completes.
+  await expect(orcaPage.getByLabel('Agent throughput, 68 tok/s')).toHaveText('68 tok/s')
+  await expectTooltip(
+    orcaPage,
+    orcaPage.getByLabel('Agent throughput, 68 tok/s'),
+    ['In the bar: 68 tok/s, last request (no message completed this turn yet)'],
+    'after-new-turn-tooltip'
+  )
   await postHook(electronApp, 'claude', descriptor, {
     ...session,
     hook_event_name: 'Stop',
@@ -298,6 +320,12 @@ test('shows tokens per second for a Codex pane from its rollout', async ({
   const readout = orcaPage.getByLabel('Agent throughput, 24 tok/s')
   await expect(readout).toBeVisible()
   await expect(readout).toHaveText('24 tok/s')
+  await expectTooltip(
+    orcaPage,
+    readout,
+    ['Last request: 24 tok/s (696 tokens in 29.3s)', 'Codex · gpt-5.5'],
+    'after-codex-tooltip'
+  )
 })
 
 test('shows an estimated tokens per second for a Grok pane from its session files', async ({
@@ -343,4 +371,112 @@ test('shows an estimated tokens per second for a Grok pane from its session file
   const readout = orcaPage.getByLabel('Agent throughput, ~40 tok/s')
   await expect(readout).toBeVisible()
   await expect(readout).toHaveText('~40 tok/s')
+  await expectTooltip(
+    orcaPage,
+    readout,
+    [
+      'Last request: ~40 tok/s (200 tokens in 5.0s)',
+      'Grok · grok-4.6',
+      'Estimated from text length; Grok records no token counts.'
+    ],
+    'after-grok-tooltip'
+  )
+})
+
+test('shows tokens per second for a Gemini CLI pane from its chat file', async ({
+  electronApp,
+  orcaPage
+}) => {
+  const descriptor = await prepareFocusedPane(orcaPage)
+  const chatDir = createTranscriptDir()
+  const chatPath = path.join(chatDir, 'session-e2e.json')
+  // Why: Gemini writes one message per model call with `tokens`; output + thoughts over the gap to the previous message.
+  writeFileSync(
+    chatPath,
+    JSON.stringify({
+      sessionId: 'e2e-gemini-session',
+      messages: [
+        { id: 'u1', timestamp: at(0), type: 'user', content: 'go' },
+        {
+          id: 'g1',
+          timestamp: at(8_000),
+          type: 'gemini',
+          content: 'done',
+          model: 'gemini-3-pro',
+          tokens: { input: 1_000, output: 300, cached: 0, thoughts: 100, tool: 0, total: 1_400 }
+        }
+      ]
+    })
+  )
+  const session = { session_id: 'e2e-gemini-session', transcript_path: chatPath, cwd: chatDir }
+
+  await postHook(electronApp, 'gemini', descriptor, {
+    ...session,
+    hook_event_name: 'BeforeAgent',
+    prompt: 'go'
+  })
+  await postHook(electronApp, 'gemini', descriptor, {
+    ...session,
+    hook_event_name: 'AfterAgent',
+    prompt_response: 'done'
+  })
+
+  const readout = orcaPage.getByLabel('Agent throughput, 50 tok/s')
+  await expect(readout).toBeVisible()
+  await expect(readout).toHaveText('50 tok/s')
+  await expectTooltip(
+    orcaPage,
+    readout,
+    ['Last request: 50 tok/s (400 tokens in 8.0s)', 'Gemini · gemini-3-pro'],
+    'after-gemini-tooltip'
+  )
+})
+
+test.describe('OpenCode', () => {
+  test.use({ orcaAppExtraEnv: { XDG_DATA_HOME: OPENCODE_DATA_HOME } })
+
+  test('shows tokens per second for an OpenCode pane from its database', async ({
+    electronApp,
+    orcaPage
+  }) => {
+    const descriptor = await prepareFocusedPane(orcaPage)
+    const dataDir = path.join(OPENCODE_DATA_HOME, 'opencode')
+    mkdirSync(dataDir, { recursive: true })
+    const db = new SyncDatabase(path.join(dataDir, 'opencode.db'))
+    db.exec(
+      'CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)'
+    )
+    // Why: OpenCode stamps each assistant message with its own created → completed span.
+    db.prepare(
+      'INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      'msg-e2e',
+      'e2e-opencode-session',
+      BASE,
+      BASE + 8_000,
+      JSON.stringify({
+        role: 'assistant',
+        providerID: 'openai',
+        modelID: 'gpt-5.5',
+        tokens: { input: 1_000, output: 400, reasoning: 0, cache: { read: 0 } },
+        time: { created: BASE, completed: BASE + 8_000 }
+      })
+    )
+    db.close()
+
+    await postHook(electronApp, 'opencode', descriptor, {
+      hook_event_name: 'SessionIdle',
+      sessionID: 'e2e-opencode-session'
+    })
+
+    const readout = orcaPage.getByLabel('Agent throughput, 50 tok/s')
+    await expect(readout).toBeVisible()
+    await expect(readout).toHaveText('50 tok/s')
+    await expectTooltip(
+      orcaPage,
+      readout,
+      ['Last request: 50 tok/s (400 tokens in 8.0s)', 'OpenCode · openai/gpt-5.5'],
+      'after-opencode-tooltip'
+    )
+  })
 })

@@ -254,6 +254,39 @@ describe('AgentThroughputTracker', () => {
     expect(gemini.classify('Notification', {})).toBe('ignore')
   })
 
+  it('drops a read that resolves after the next prompt started a new turn', async () => {
+    let resolveSlow: (value: AgentMessageThroughput | undefined) => void = () => {}
+    const read = vi
+      .fn()
+      .mockImplementationOnce(() => message({ messageId: 'first' }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<AgentMessageThroughput | undefined>((resolve) => {
+            resolveSlow = resolve
+          })
+      )
+      .mockImplementationOnce(() => message({ messageId: 'next-turn', outputTokens: 100 }))
+    const tracker = createTracker(read)
+    const listener = vi.fn()
+    tracker.setListener(listener)
+
+    await observe(tracker, 'Stop')
+    const slow = observe(tracker, 'PostToolUse')
+    await observe(tracker, 'UserPromptSubmit')
+    resolveSlow(message({ messageId: 'stale', outputTokens: 900 }))
+    await slow
+    await observe(tracker, 'Stop')
+
+    // Why: the stale read would otherwise count 900 tokens into the new turn's totals.
+    const last = listener.mock.calls.at(-1)![0]
+    expect(last).toMatchObject({
+      messageId: 'next-turn',
+      turnOutputTokens: 100,
+      turnMessageCount: 1
+    })
+    expect(listener.mock.calls.some(([sample]) => sample.messageId === 'stale')).toBe(false)
+  })
+
   it('advertises exactly the sources it can read', () => {
     // Why: the renderer's "not available for this agent" hint is driven by the shared list.
     expect(Object.keys(AGENT_THROUGHPUT_SOURCE_PROFILES).sort()).toEqual(
