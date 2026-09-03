@@ -50,8 +50,11 @@ const OPENCODE_COMPLETE_EVENTS: ReadonlySet<string> = new Set([
 ])
 const OPENCODE_STREAMING_READ_INTERVAL_MS = 1_500
 
+// Why: a reading must not outlive the session that produced it, so SessionEnd clears it like
+// SessionStart does. Orca installs that hook for Grok only today; the others keep their last
+// reading until a new session starts in the pane.
 function classifyClaudeStyleHook(hookEventName: string): ThroughputHookAction {
-  if (hookEventName === 'SessionStart') {
+  if (hookEventName === 'SessionStart' || hookEventName === 'SessionEnd') {
     return 'reset'
   }
   if (hookEventName === 'UserPromptSubmit') {
@@ -92,7 +95,7 @@ const OPENCODE_PROFILE: AgentThroughputSourceProfile = {
 
 const GROK_PROFILE: AgentThroughputSourceProfile = {
   classify: (hookEventName) => {
-    if (isGrokEvent(hookEventName, 'session_start')) {
+    if (isGrokEvent(hookEventName, 'session_start', 'session_end')) {
       return 'reset'
     }
     if (isGrokEvent(hookEventName, 'user_prompt_submit')) {
@@ -129,7 +132,7 @@ export const AGENT_THROUGHPUT_SOURCE_PROFILES: Partial<
   },
   gemini: {
     classify: (hookEventName) => {
-      if (hookEventName === 'SessionStart') {
+      if (hookEventName === 'SessionStart' || hookEventName === 'SessionEnd') {
         return 'reset'
       }
       if (hookEventName === 'BeforeAgent') {

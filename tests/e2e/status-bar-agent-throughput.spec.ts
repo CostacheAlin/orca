@@ -386,6 +386,16 @@ test('shows an estimated tokens per second for a Grok pane from its session file
     ],
     'after-grok-tooltip'
   )
+
+  // Why: Grok's exit reaches Orca as a SessionEnd hook; the reading must not outlive the session.
+  await postHook(
+    electronApp,
+    'grok',
+    descriptor,
+    { ...session, hook_event_name: 'SessionEnd' },
+    envelope
+  )
+  await expect(orcaPage.getByLabel('Agent throughput, n/a tok/s')).toHaveText('n/a tok/s')
 })
 
 test('shows tokens per second for a Gemini CLI pane from its chat file', async ({

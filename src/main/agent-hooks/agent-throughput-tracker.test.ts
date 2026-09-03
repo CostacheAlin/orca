@@ -251,7 +251,25 @@ describe('AgentThroughputTracker', () => {
     expect(gemini.classify('AfterTool', {})).toBe('measure')
     expect(gemini.classify('AfterAgent', {})).toBe('measure')
     expect(gemini.classify('SessionStart', {})).toBe('reset')
+    expect(gemini.classify('SessionEnd', {})).toBe('reset')
     expect(gemini.classify('Notification', {})).toBe('ignore')
+  })
+
+  it('clears the pane when the agent session ends', async () => {
+    const tracker = createTracker(() => message())
+    const clearListener = vi.fn()
+    tracker.setListener(vi.fn())
+    tracker.setClearListener(clearListener)
+
+    await observe(tracker, 'Stop')
+    expect(tracker.getSnapshot()).toHaveLength(1)
+    // Why: the last reading must not outlive the agent that produced it.
+    await observe(tracker, 'SessionEnd')
+    expect(clearListener).toHaveBeenCalledWith(PANE)
+    expect(tracker.getSnapshot()).toEqual([])
+
+    expect(AGENT_THROUGHPUT_SOURCE_PROFILES.grok!.classify('SessionEnd', {})).toBe('reset')
+    expect(AGENT_THROUGHPUT_SOURCE_PROFILES.codex!.classify('SessionEnd', {})).toBe('reset')
   })
 
   it('drops a read that resolves after the next prompt started a new turn', async () => {
