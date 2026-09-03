@@ -323,7 +323,11 @@ test('shows tokens per second for a Codex pane from its rollout', async ({
   await expectTooltip(
     orcaPage,
     readout,
-    ['Last request: 24 tok/s (696 tokens in 29.3s)', 'Codex · gpt-5.5'],
+    [
+      'In the bar: 24 tok/s, this turn’s average over 1 message(s)',
+      'Last request: 24 tok/s (696 tokens in 29.3s)',
+      'Codex · gpt-5.5'
+    ],
     'after-codex-tooltip'
   )
 })
@@ -375,6 +379,7 @@ test('shows an estimated tokens per second for a Grok pane from its session file
     orcaPage,
     readout,
     [
+      'In the bar: ~40 tok/s, this turn’s average over 1 message(s)',
       'Last request: ~40 tok/s (200 tokens in 5.0s)',
       'Grok · grok-4.6',
       'Estimated from text length; Grok records no token counts.'
@@ -427,7 +432,11 @@ test('shows tokens per second for a Gemini CLI pane from its chat file', async (
   await expectTooltip(
     orcaPage,
     readout,
-    ['Last request: 50 tok/s (400 tokens in 8.0s)', 'Gemini · gemini-3-pro'],
+    [
+      'In the bar: 50 tok/s, this turn’s average over 1 message(s)',
+      'Last request: 50 tok/s (400 tokens in 8.0s)',
+      'Gemini · gemini-3-pro'
+    ],
     'after-gemini-tooltip'
   )
 })
@@ -475,7 +484,11 @@ test.describe('OpenCode', () => {
     await expectTooltip(
       orcaPage,
       readout,
-      ['Last request: 50 tok/s (400 tokens in 8.0s)', 'OpenCode · openai/gpt-5.5'],
+      [
+        'In the bar: 50 tok/s, this turn’s average over 1 message(s)',
+        'Last request: 50 tok/s (400 tokens in 8.0s)',
+        'OpenCode · openai/gpt-5.5'
+      ],
       'after-opencode-tooltip'
     )
   })
