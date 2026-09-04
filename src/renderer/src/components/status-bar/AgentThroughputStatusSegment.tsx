@@ -47,7 +47,7 @@ function placeholderHint(reason: AgentThroughputPlaceholderReason, agentType?: s
 }
 
 // Why: TooltipTrigger renders this as its child, so the ref and pointer handlers it injects must
-// land on the span or the tooltip never opens.
+// land on the button or the tooltip never opens.
 function Readout({
   iconOnly,
   value,
@@ -58,14 +58,14 @@ function Readout({
   iconOnly: boolean
   value: string
   emphasized: boolean
-} & React.ComponentPropsWithRef<'span'>): React.JSX.Element {
+} & React.ComponentPropsWithRef<'button'>): React.JSX.Element {
   return (
-    <span
+    <button
+      type="button"
       {...triggerProps}
-      // Why: a span is not focusable, so keyboard users could never open the tooltip.
-      tabIndex={0}
+      // Why: a readout, not an action; the sibling segments' hover wash would promise a click.
       className={cn(
-        'inline-flex items-center gap-1 rounded px-1 py-0.5 tabular-nums',
+        'inline-flex cursor-default items-center gap-1 rounded px-1 py-0.5',
         // Why: dim while idle so the last reading isn't mistaken for live generation.
         emphasized ? 'text-foreground' : 'text-muted-foreground',
         className
@@ -76,9 +76,9 @@ function Readout({
         { value }
       )}
     >
-      <Gauge size={12} />
-      {iconOnly ? null : <span>{value}</span>}
-    </span>
+      <Gauge className="size-3" />
+      {iconOnly ? null : <span className="text-[11px] font-medium tabular-nums">{value}</span>}
+    </button>
   )
 }
 
@@ -92,11 +92,11 @@ export function AgentThroughputStatusSegment({
   const sample = useAppStore((s) => (paneKey ? s.agentThroughputByPaneKey[paneKey] : undefined))
   const paneAgent = useAppStore((s) => (paneKey ? s.agentStatusByPaneKey[paneKey] : undefined))
   const working = paneAgent?.state === 'working'
-  const measuredFor = translate(
-    'auto.components.status.bar.AgentThroughputStatusSegment.measuredFor',
-    'Measured for Claude Code, Codex, Gemini CLI, OpenCode, MiMo Code. Estimated for Grok.'
-  )
   if (!sample) {
+    const measuredFor = translate(
+      'auto.components.status.bar.AgentThroughputStatusSegment.measuredFor',
+      'Measured for Claude Code, Codex, Gemini CLI, OpenCode, MiMo Code. Estimated for Grok.'
+    )
     // Why: an enabled item must always render, or "nothing" is indistinguishable from "off".
     const reason = resolveAgentThroughputPlaceholderReason({
       paneKey,
@@ -110,7 +110,9 @@ export function AgentThroughputStatusSegment({
         <TooltipContent side="top" sideOffset={6}>
           <div className="space-y-0.5">
             <div>{placeholderHint(reason, paneAgent?.agentType)}</div>
-            <div className="text-muted-foreground">{measuredFor}</div>
+            {reason === 'unmeasured-agent' ? (
+              <div className="text-muted-foreground">{measuredFor}</div>
+            ) : null}
           </div>
         </TooltipContent>
       </Tooltip>
@@ -169,7 +171,6 @@ export function AgentThroughputStatusSegment({
               )}
             </div>
           ) : null}
-          <div className="text-muted-foreground">{measuredFor}</div>
         </div>
       </TooltipContent>
     </Tooltip>
