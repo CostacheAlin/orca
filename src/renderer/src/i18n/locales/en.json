@@ -9070,7 +9070,10 @@
               "background": "background"
             },
             "throughputTitle": "Agent Tokens/sec",
-            "throughputDescription": "Show the focused agent’s generation speed in the status bar."
+            "throughputDescription": "Show the focused agent’s generation speed in the status bar.",
+            "throughputKeyword": "throughput",
+            "tokensPerSecondKeyword": "tokens per second",
+            "speedKeyword": "speed"
           }
         },
         "auto": {
