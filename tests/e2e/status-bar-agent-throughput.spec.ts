@@ -101,6 +101,11 @@ async function postHook(
 }
 
 // Why: optional PR evidence. The status bar is a 24 px strip, so a bottom crop reads better than a full window.
+// Why: the style guide asks UI changes to be checked in both themes; an evidence run picks one.
+const evidenceTheme = process.env.ORCA_THROUGHPUT_EVIDENCE_THEME
+const EVIDENCE_THEME: 'dark' | 'light' | null =
+  evidenceTheme === 'dark' || evidenceTheme === 'light' ? evidenceTheme : null
+
 async function captureEvidence(
   page: Page,
   name: string,
@@ -111,8 +116,9 @@ async function captureEvidence(
     return
   }
   mkdirSync(dir, { recursive: true })
+  const fileName = EVIDENCE_THEME ? `${name}-${EVIDENCE_THEME}` : name
   if (options.full) {
-    await page.screenshot({ path: path.join(dir, `${name}.png`) })
+    await page.screenshot({ path: path.join(dir, `${fileName}.png`) })
   }
   // Why: Electron pages report no Playwright viewport; the window's own size is the real one.
   const viewport = await page.evaluate(() => ({
@@ -123,7 +129,7 @@ async function captureEvidence(
   const height = options.stripHeight ?? 40
   const width = Math.min(viewport.width, 720)
   await page.screenshot({
-    path: path.join(dir, `${name}-status-bar.png`),
+    path: path.join(dir, `${fileName}-status-bar.png`),
     clip: { x: viewport.width - width, y: viewport.height - height, width, height }
   })
 }
@@ -157,6 +163,11 @@ async function prepareFocusedPane(
   await waitForActiveWorktree(orcaPage)
   await ensureTerminalVisible(orcaPage)
   const descriptor = await waitForActivePaneHookDescriptor(orcaPage)
+  if (EVIDENCE_THEME) {
+    await orcaPage.evaluate((theme) => {
+      window.__store?.getState().updateSettings({ theme })
+    }, EVIDENCE_THEME)
+  }
   if (options.captureBefore) {
     await captureEvidence(orcaPage, 'before', { full: true })
   }
