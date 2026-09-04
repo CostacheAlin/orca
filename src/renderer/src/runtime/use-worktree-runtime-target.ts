@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useAppStore } from '@/store'
 import { getExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { runtimeTargetForExecutionHostId, type RuntimeClientTarget } from './runtime-client-target'
@@ -10,7 +11,9 @@ import { runtimeTargetForExecutionHostId, type RuntimeClientTarget } from './run
 export function useWorktreeRuntimeTarget(
   worktreeId: string | null | undefined
 ): RuntimeClientTarget | null {
-  return useAppStore((state) =>
-    runtimeTargetForExecutionHostId(getExecutionHostIdForWorktree(state, worktreeId))
-  )
+  // Why: the selector must return a stable value. `runtimeTargetForExecutionHostId` allocates a
+  // new object per call, and a zustand selector that returns a fresh reference on every snapshot
+  // re-renders forever (React #185). Select the host id string and derive the target from it.
+  const hostId = useAppStore((state) => getExecutionHostIdForWorktree(state, worktreeId))
+  return useMemo(() => runtimeTargetForExecutionHostId(hostId), [hostId])
 }
