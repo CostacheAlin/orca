@@ -234,7 +234,7 @@ test('shows tokens per second for the focused pane once a Claude message complet
   await expect(firstReadout).toHaveText('68 tok/s')
   await captureEvidence(orcaPage, 'after', { full: true })
   await expectTooltip(orcaPage, firstReadout, [
-    'In the bar: 68 tok/s, this turn’s average over 1 message(s)',
+    'In the bar: 68 tok/s, this turn’s average over 1 model response(s)',
     'Last request: 68 tok/s (2.5k tokens in 36.5s)',
     'Claude · claude-e2e'
   ])
@@ -335,7 +335,7 @@ test('shows tokens per second for a Codex pane from its rollout', async ({
     orcaPage,
     readout,
     [
-      'In the bar: 24 tok/s, this turn’s average over 1 message(s)',
+      'In the bar: 24 tok/s, this turn’s average over 1 model response(s)',
       'Last request: 24 tok/s (696 tokens in 29.3s)',
       'Codex · gpt-5.5'
     ],
@@ -390,7 +390,7 @@ test('shows an estimated tokens per second for a Grok pane from its session file
     orcaPage,
     readout,
     [
-      'In the bar: ~40 tok/s, this turn’s average over 1 message(s)',
+      'In the bar: ~40 tok/s, this turn’s average over 1 model response(s)',
       'Last request: ~40 tok/s (200 tokens in 5.0s)',
       'Grok · grok-4.6',
       'Estimated from text length; Grok records no token counts.'
@@ -454,7 +454,7 @@ test('shows tokens per second for a Gemini CLI pane from its chat file', async (
     orcaPage,
     readout,
     [
-      'In the bar: 50 tok/s, this turn’s average over 1 message(s)',
+      'In the bar: 50 tok/s, this turn’s average over 1 model response(s)',
       'Last request: 50 tok/s (400 tokens in 8.0s)',
       'Gemini · gemini-3-pro'
     ],
@@ -506,7 +506,7 @@ test.describe('OpenCode', () => {
       orcaPage,
       readout,
       [
-        'In the bar: 50 tok/s, this turn’s average over 1 message(s)',
+        'In the bar: 50 tok/s, this turn’s average over 1 model response(s)',
         'Last request: 50 tok/s (400 tokens in 8.0s)',
         'OpenCode · openai/gpt-5.5'
       ],

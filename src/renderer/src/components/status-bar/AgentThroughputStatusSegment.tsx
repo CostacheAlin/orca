@@ -140,7 +140,7 @@ export function AgentThroughputStatusSegment({
             {turnAverage !== null
               ? translate(
                   'auto.components.status.bar.AgentThroughputStatusSegment.barTurnAverage',
-                  'In the bar: {{value}} tok/s, this turn’s average over {{count}} message(s)',
+                  'In the bar: {{value}} tok/s, this turn’s average over {{count}} model response(s)',
                   { value: barValue, count: sample.turnMessageCount }
                 )
               : translate(

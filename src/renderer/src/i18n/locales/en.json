@@ -3964,7 +3964,7 @@
             "waiting": "No completed message in this terminal yet.",
             "measuredFor": "Measured for Claude Code, Codex, Gemini CLI, OpenCode, MiMo Code. Estimated for Grok.",
             "estimated": "Estimated from text length; Grok records no token counts.",
-            "barTurnAverage": "In the bar: {{value}} tok/s, this turn’s average over {{count}} message(s)",
+            "barTurnAverage": "In the bar: {{value}} tok/s, this turn’s average over {{count}} model response(s)",
             "barLastRequest": "In the bar: {{value}} tok/s, last request (no message completed this turn yet)",
             "lastRequest": "Last request: {{value}} tok/s ({{tokens}} tokens in {{duration}})"
           }
